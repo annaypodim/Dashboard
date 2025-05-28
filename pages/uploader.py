@@ -59,15 +59,26 @@ if submit and uploaded:
 st.write("Create a new race below:")
 new_uploaded_file = st.file_uploader("Upload csv here",type=".csv", accept_multiple_files=False, key="adsklfj")
 race_name = st.text_input("Input race name here ex. 2024 race -- Must be just the year")
-start_date = st.date_input("Input start date of registrations")
+# start_date = st.date_input("Input start date of registrations")
 end_date = st.date_input("Input last day of registrations")
 create_new_race = st.button("Create new race")
+st.dataframe(pd.read_csv(new_uploaded_file, dtype=str, usecols=['Date Registered', 'Sex', 'City', 'State', 'ZIP/Postal Code', 'Sub-event', 'Age']))
 
-if create_new_race and new_uploaded_file is not None and race_name is not None and start_date is not None and end_date is not None:
-    data1 = pd.read_csv(new_uploaded_file, dtype=str, usecols=['Participant ID', 'Date Registered', 'Bib Numbers', 'Last Name', 'First Name', 'Sex', 'Date of Birth', 'Email', 'City', 'State', 'Address', 'ZIP/Postal Code', 'Country', 'Sub-event', 'Age', 'Confirmation No.'])
-    dataframe1 = pd.DataFrame(data).fillna("")
-    # write_new_race(dataframe1, race_name, start_date, end_date)
-    with open(f"csvs/{race_name}_race.csv", 'w', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerows(dataframe1)
+
+#verify everything to update info.csv exists
+if create_new_race and new_uploaded_file is not None and race_name is not None and end_date is not None:
+    data1 = pd.read_csv(new_uploaded_file, dtype=str, usecols=['Date Registered', 'Sex', 'City', 'State', 'ZIP/Postal Code', 'Sub-event', 'Age'])
+    dataframe1 = pd.DataFrame(data1).fillna("")
+    st.write(f"start registration date: {dataframe1['Date Registered'].loc[0]}")
+    if race_name not in [i.race_name for i in races]:
+
+        st.write("writing new information")
+        dataframe1.to_csv(f'csvs/{race_name}_race.csv', index=False)
+        df = pd.read_csv('csvs/info.csv')
+        df.loc[-1] = [f"{race_name}_race", dataframe1['Date Registered'].loc[0], end_date]
+        df.to_csv("csvs/info.csv",index=False)
+
+        
+    else:
+        st.write("name already exists, check to see if this race already exists")
 
