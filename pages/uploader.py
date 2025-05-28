@@ -5,7 +5,7 @@ from class_init import *
 import csv
 
 
-# helpful init
+# initialize info class
 info = Information()
 info_df = info.dataframe
 
@@ -13,42 +13,59 @@ races = []
 for i in range(len(info_df.index)):
     start_date = datetime.strptime(info_df['Registration start date'].iloc[i], "%Y-%m-%d").date()
     end_date = datetime.strptime(info_df['Registration end date'].iloc[i], "%Y-%m-%d").date()
-    races.append(Race(pd.read_csv(f'csvs/{start_date.year}_race.csv'), start_date, end_date, info_df['Name of race'].iloc[i]))
+    races.append(Race(start_date, end_date, info_df['Name of race'].iloc[i]))
+
+
 
 year_selector = st.radio(
     "Select race you want to modify",
-    [i.race_name for i in races]
+    [i.race_name for i in reversed(races)]
 )
+
+
 st.write(f"currently uploading for: {year_selector}")
 
-current_year_number = date.today().year
+today = pd.to_datetime(date.today())
+
+
+for i in reversed(range(len(races))):
+    days_from_race = (races[i].end_date-pd.Timestamp(today).date()).days
+    if days_from_race >= 0:
+        st.write(f"today is {days_from_race} days from race for {races[i].race_name}")
+        break
+
+
 
 uploaded = False
 uploaded_file = st.file_uploader("Upload csv here",type=".csv", accept_multiple_files=False)
 
 
 if uploaded_file is not None:
-    data = pd.read_csv(uploaded_file, dtype=str, usecols=['Date Registered', 'Sex', 'City', 'State', 'ZIP/Postal Code', 'Sub-event', 'Age'])
-    dataframe = pd.DataFrame(data).fillna("")
-    st.write(dataframe)
+    data = pd.read_csv(uploaded_file, dtype=str, usecols=['Participant ID','Date Registered','Sex','City','State','ZIP/Postal Code','Country','Sub-event','Age'])
+    df = pd.DataFrame(data).fillna("")
+    df = df.rename(columns={"Sub-event": "event", "Date Registered": "Date"})
+    for i in range(len(df)):
+        string = df['Date'].iloc[i]
+        string = string[:len(string) - 4]
+        df.at[i, 'Date'] = datetime.strptime(string, '%Y-%m-%d %H:%M:%S')
+    st.write(df)
     uploaded = True
 
 submit = st.button("submit")
 
 if submit and uploaded:
-    stringg = dataframe['Date Registered'].iloc[0]
-    stringg = stringg[:len(stringg)-4]
-    year_of_csv = datetime.strptime(stringg, "%Y-%m-%d %H:%M:%S").year
-    print(year_of_csv)
-    if current_year_number == year_of_csv:
-        match is_new_data(dataframe):
-            case 0:
-                st.write("Data already up to date")
-            case 1:
-                write_data(dataframe, current_year_number)
-                st.write("New data uploaded")
-            case 2:
-                st.write("Too many values have been removed from the spreadsheet, try to upload a more recent sheet")
+    st.write(f"CSV is reporting data for: {df['Date'].iloc[0].date()}")
+    info_df['Name of race' == year_selector]['']
+    if today >= df['Date'].iloc[0] and today <= df['Date'].iloc[len(df)-1]:
+        st.write("data within range of race")
+        # match is_new_data(dataframe):
+        #     case 0:
+        #         st.write("Data already up to date")
+        #     case 1:
+        #         write_data(dataframe, current_year_number)
+        #         st.write("New data uploaded")
+        #     case 2:
+        #         st.write("Too many values have been removed from the spreadsheet, try to upload a more recent sheet")
     else:
         st.write("Uploaded data is invalid, please check the year of data you are uploading for is the current year")
 
@@ -77,8 +94,6 @@ if create_new_race and new_uploaded_file is not None and race_name is not None a
         df = pd.read_csv('csvs/info.csv')
         df.loc[-1] = [f"{race_name}_race", dataframe1['Date Registered'].loc[0], end_date]
         df.to_csv("csvs/info.csv",index=False)
-
-        
     else:
         st.write("name already exists, check to see if this race already exists")
 

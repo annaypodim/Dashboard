@@ -13,12 +13,13 @@ races = []
 for i in range(len(info_df.index)):
     start_date = datetime.strptime(info_df['Registration start date'].iloc[i], "%Y-%m-%d").date()
     end_date = datetime.strptime(info_df['Registration end date'].iloc[i], "%Y-%m-%d").date()
-    races.append(Race(pd.read_csv(f'csvs/{start_date.year}_race.csv'), start_date, end_date, info_df['Name of race'].iloc[i]))
+    races.append(Race(start_date, end_date, info_df['Name of race'].iloc[i]))
+
 
 
 
 st.write("The purpose of this is to graphically see registrations, overall and by unique event year by year")
-unique = sorted(races[0].dataframe['Sub-event'].unique())
+unique = sorted(races[0].dataframe['event'].unique())
 unique.append("all registrations")
 
 selector = st.radio(

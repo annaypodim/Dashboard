@@ -53,7 +53,6 @@ def graph_it(name:str, races) -> None:
 
     dataframe1 = pd.DataFrame(data)
 
-
     fig = px.line(dataframe1, x='Days Until Race', y=names_list)
     fig.update_xaxes(type='category')
     st.plotly_chart(fig)
