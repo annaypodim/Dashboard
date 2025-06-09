@@ -80,42 +80,51 @@ if submit and uploaded:
 st.write("------------------------------------------------------")
 
 st.write("Create a new race below:")
+
+
+
+
+
 new_uploaded_file = st.file_uploader("Upload csv here",type=".csv", accept_multiple_files=False, key="adsklfj")
+
+if new_uploaded_file is not None:
+    data1 = pd.read_csv(new_uploaded_file, dtype=str, usecols=['Participant ID','Date Registered','Sex','City','State','ZIP/Postal Code','Country','Sub-event','Age'])
+    df1 = pd.DataFrame(data1).fillna("")
+    df1 = df1.rename(columns={"Sub-event": "event", "Date Registered": "Date"})
+    for i in range(len(df1)):
+        string = df1['Date'].iloc[i]
+        string = string[:len(string) - 4]
+        df1.at[i, 'Date'] = datetime.strptime(string, '%Y-%m-%d %H:%M:%S')
+    st.write(df1)
+    uploaded_new = True
+
+
 race_name = st.text_input("Input a new race name here (refer to top of page to see names already in use), first character MUST BE ALPHABETICAL & NOT A NUMBER OR SYMBOL")
 end_date = st.date_input("Input last day of registrations(the day of the race for us)")
 create_new_race = st.button("Create new race")
-if new_uploaded_file != None:
-    st.dataframe(pd.read_csv(new_uploaded_file, dtype=str, usecols=['Participant ID','Date Registered', 'Sex', 'City', 'State', 'ZIP/Postal Code', 'Sub-event', 'Age']))
 
 
+if create_new_race:
+    if uploaded_new is not None and race_name is not None and end_date is not None and race_name[0].isalpha():
 
-
-
-
-#final part that needs fixing:
-#verify everything to update info.csv exists
-if create_new_race and new_uploaded_file is not None and race_name is not None and end_date is not None and race_name[0].isalpha():
-    data1 = pd.read_csv(uploaded_file, dtype=str, usecols=['Participant ID','Date Registered','Sex','City','State','ZIP/Postal Code','Country','Sub-event','Age'])
-    new_df = pd.DataFrame(data1).fillna("")
-    new_df = new_df.rename(columns={"Sub-event": "event", "Date Registered": "Date"})
-    for i in range(len(new_df)):
-        string = new_df['Date'].iloc[i]
-        string = string[:len(string) - 4]
-        new_df.at[i, 'Date'] = datetime.strptime(string, '%Y-%m-%d %H:%M:%S')
-    st.write(new_df)
-    start_date = new_df['Date'].loc[0]
-    if race_name not in [i.race_name for i in races]:
-        st.write("writing new information")
-        conn = sqlite3.connect("races.db")
-        new_df.to_sql(race_name, conn)
-        conn.close()
-        new_info_df = pd.read_csv('csvs/info.csv')
-        new_info_df.loc[len(new_info_df)] = [f"{race_name}", new_df['Date Registered'].loc[0], end_date]
-        new_info_df.to_csv("csvs/info.csv",index=False)
+        new_df = df1
+        st.write(new_df)
+        start_date = new_df['Date'].loc[0]
+        if race_name not in [i.race_name for i in races]:
+            st.write("writing new information")
+            new_info_df = pd.read_csv('csvs/info.csv')
+            new_info_df.loc[len(new_info_df)] = [f"{race_name}", new_df['Date'].loc[0].date(), end_date]
+            new_info_df.to_csv("csvs/info.csv",index=False)
+            st.write("info sheet updated")
+            conn = sqlite3.connect("races.db")
+            new_df.to_sql(race_name, conn)
+            conn.close()
+            st.write("database updated")
+        else:
+            st.write("❌name already exists, choose a different name")
     else:
-        st.write("❌name already exists, choose a different name")
-else:
-    st.write("❌unable to write file")
-    if not race_name[0].isalpha():
-        st.write("❌Race name must start with a letter")
+        st.write("❌unable to write file")
+        st.write(f"new_uploaded_file={new_uploaded_file is not None}, race_name={race_name is not None}, end_date = {end_date is not None}, race_name= {race_name[0].isalpha()}")
+        if not race_name[0].isalpha():
+            st.write("❌Race name must start with a letter")
 
