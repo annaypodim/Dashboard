@@ -36,7 +36,7 @@ def authenticate_user():
 class Information:
     def __init__(self) -> None:
         # a nice imporovement would be a better way of storing this info more dynamically, like in an editable json file
-        self.dataframe = pd.DataFrame(pd.read_csv("csvs/info.csv", dtype=str).fillna(""))
+        self.dataframe = pd.DataFrame(pd.read_csv("info.csv", dtype=str).fillna(""))
         
     def get_race_by_table_name(self, name:str)->pd.DataFrame:
         self.conn = sqlite3.connect('races.db')

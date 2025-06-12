@@ -3,10 +3,26 @@ import streamlit as st
 from datetime import *
 from class_init import *
 from dashboardHelper import *
-
-
+import os
+import pandas as pd
 if not authenticate_user():
     st.stop()
+
+if not os.path.exists('info.csv'):
+    st.write("info csv not found.. creating now")
+    column_names=['Name','Registration start date','Registration end date']
+    df = pd.DataFrame(columns=column_names)
+    df.to_csv(index=False)
+    st.write("info csv created")
+
+if not os.path.exists(".env"):
+    st.write(".env file not found -- for this website to work, it must be copied over -- stoping website")
+    st.stop()
+
+if not os.path.exists("races.db"):
+    st.write("races.db file not found -- stopping website")
+    st.stop()
+
 
 # initialize info class
 info = Information()
@@ -17,6 +33,9 @@ for i in range(len(info_df.index)):
     start_date = datetime.strptime(info_df['Registration start date'].iloc[i], "%Y-%m-%d").date()
     end_date = datetime.strptime(info_df['Registration end date'].iloc[i], "%Y-%m-%d").date()
     races.append(Race(start_date, end_date, info_df['Name'].iloc[i]))
+
+# alternate:
+
 
 
 
