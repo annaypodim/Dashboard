@@ -5,6 +5,9 @@ from class_init import *
 import csv
 
 
+if not authenticate_user():
+    st.stop()
+
 # initialize info class
 info = Information()
 info_df = info.dataframe

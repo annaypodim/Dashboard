@@ -2,6 +2,10 @@ import streamlit as st
 from datetime import *
 from class_init import *
 
+if not authenticate_user():
+    st.stop()
+
+
 # initialize info class
 info = Information()
 info_df = info.dataframe

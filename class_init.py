@@ -4,6 +4,33 @@ from operator import *
 import plotly.express as px
 import streamlit as st
 import sqlite3
+from dotenv import load_dotenv
+import os
+
+def creds_entered():
+    load_dotenv()
+    if st.session_state["user"].strip() == os.getenv("user") and st.session_state["passwd"].strip() == os.getenv("password"):
+        st.session_state["authenticated"] = True
+    else:
+        st.session_state["authenticated"] = False
+        st.error("Invalid username/password")
+
+
+
+def authenticate_user():
+    if "authenticated" not in st.session_state:
+        st.text_input(label="username :", value="", key="user", on_change=creds_entered)
+        st.text_input(label="username :", value="", key="passwd", type="password", on_change=creds_entered)
+        return False
+    else:
+        if st.session_state["authenticated"]:
+            return True
+        else:
+            st.text_input(label="username :", value="", key="user", on_change=creds_entered)
+            st.text_input(label="username :", value="", key="passwd", type="password", on_change=creds_entered)
+            return False
+
+
 
 
 class Information:
