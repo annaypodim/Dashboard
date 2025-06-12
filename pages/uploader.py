@@ -67,6 +67,7 @@ if submit and uploaded:
             st.write("✅ Data is okay to be written and is being written")
             conn = sqlite3.connect("races.db")
             df.to_sql(year_selector, conn, if_exists='replace')
+            conn.commit()
             conn.close()
             st.write("✅ New data has been successfully uploaded")
 
@@ -111,15 +112,16 @@ if create_new_race:
         st.write(new_df)
         start_date = new_df['Date'].loc[0]
         if race_name not in [i.race_name for i in races]:
-            st.write("writing new information")
+            st.write("✅writing new information")
             new_info_df = pd.read_csv('csvs/info.csv')
             new_info_df.loc[len(new_info_df)] = [f"{race_name}", new_df['Date'].loc[0].date(), end_date]
             new_info_df.to_csv("csvs/info.csv",index=False)
-            st.write("info sheet updated")
+            st.write("✅info sheet updated")
             conn = sqlite3.connect("races.db")
             new_df.to_sql(race_name, conn)
+            conn.commit()
             conn.close()
-            st.write("database updated")
+            st.write("✅database updated")
         else:
             st.write("❌name already exists, choose a different name")
     else:
