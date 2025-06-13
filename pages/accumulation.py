@@ -10,6 +10,8 @@ if not authenticate_user():
 info = Information()
 info_df = info.dataframe
 
+
+
 races = []
 for i in range(len(info_df.index)):
     start_date = datetime.strptime(info_df['Registration start date'].iloc[i], "%Y-%m-%d").date()

@@ -7,6 +7,8 @@ import sqlite3
 from dotenv import load_dotenv
 import os
 
+
+# user auth code
 def creds_entered():
     load_dotenv()
     if st.session_state["user"].strip() == os.getenv("user") and st.session_state["passwd"].strip() == os.getenv("password"):
@@ -15,19 +17,17 @@ def creds_entered():
         st.session_state["authenticated"] = False
         st.error("Invalid username/password")
 
-
-
 def authenticate_user():
     if "authenticated" not in st.session_state:
         st.text_input(label="username :", value="", key="user", on_change=creds_entered)
-        st.text_input(label="username :", value="", key="passwd", type="password", on_change=creds_entered)
+        st.text_input(label="password :", value="", key="passwd", type="password", on_change=creds_entered)
         return False
     else:
         if st.session_state["authenticated"]:
             return True
         else:
             st.text_input(label="username :", value="", key="user", on_change=creds_entered)
-            st.text_input(label="username :", value="", key="passwd", type="password", on_change=creds_entered)
+            st.text_input(label="password :", value="", key="passwd", type="password", on_change=creds_entered)
             return False
 
 
@@ -35,12 +35,13 @@ def authenticate_user():
 
 class Information:
     def __init__(self) -> None:
-        # a nice imporovement would be a better way of storing this info more dynamically, like in an editable json file
-        self.dataframe = pd.DataFrame(pd.read_csv("info.csv", dtype=str).fillna(""))
+        self.conn = sqlite3.connect("races.db", uri=True)
+        self.dataframe = pd.read_sql("SELECT * FROM info", self.conn)
+        self.conn.close()
         
-    def get_race_by_table_name(self, name:str)->pd.DataFrame:
-        self.conn = sqlite3.connect('races.db')
-        d = pd.read_sql(f"SELECT * FROM {name}", self.conn)
+    def get_race_by_table_name(self, race_name:str)-> pd.DataFrame:
+        self.conn = sqlite3.connect("races.db", uri=True)
+        d = pd.read_sql(f"SELECT * FROM {race_name}", self.conn)
         self.conn.close()
         return d
 

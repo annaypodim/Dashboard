@@ -8,19 +8,13 @@ import pandas as pd
 if not authenticate_user():
     st.stop()
 
-if not os.path.exists('info.csv'):
-    st.write("info csv not found.. creating now")
-    column_names=['Name','Registration start date','Registration end date']
-    df = pd.DataFrame(columns=column_names)
-    df.to_csv(index=False)
-    st.write("info csv created")
 
 if not os.path.exists(".env"):
     st.write(".env file not found -- for this website to work, it must be copied over -- stoping website")
     st.stop()
 
 if not os.path.exists("races.db"):
-    st.write("races.db file not found -- stopping website")
+    st.write("races.db file not found -- stopping website (required for website to function)")
     st.stop()
 
 

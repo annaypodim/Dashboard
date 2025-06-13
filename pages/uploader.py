@@ -42,6 +42,8 @@ for i in reversed(range(len(races))):
 uploaded = False
 uploaded_file = st.file_uploader("Upload csv here",type=".csv", accept_multiple_files=False)
 
+ogRace = info.get_race_by_table_name(year_selector)
+
 
 if uploaded_file is not None:
     data = pd.read_csv(uploaded_file, dtype=str, usecols=['Participant ID','Date Registered','Sex','City','State','ZIP/Postal Code','Country','Sub-event','Age'])
@@ -53,23 +55,22 @@ if uploaded_file is not None:
         df.at[i, 'Date'] = datetime.strptime(string, '%Y-%m-%d %H:%M:%S')
     st.write(df)
     uploaded = True
+    st.write(f"{len(df)-len(ogRace)} new rows to be added")
+
 
 submit = st.button("submit")
 
 
-#work in progress
 if submit and uploaded:
     st.write(f"CSV is reporting data for: {df['Date'].iloc[0].date()}")
     string = info_df[info_df['Name'] == year_selector]['Registration end date'].iloc[0]
     if today >= pd.Timestamp(df['Date'].iloc[0]).date() and today <= pd.Timestamp(string).date():
-        ogRace = info.get_race_by_table_name(year_selector)
+        conn = sqlite3.connect("races.db")
         st.write("✅ data within range of race")
-        # match is_new_data(dataframe):
-        #     case 0:
         if pd.Timestamp(df['Date'].iloc[-1]).date() >= pd.Timestamp(ogRace['Date'].iloc[-1]).date():
             st.write("✅ Data is okay to be written and is being written")
             conn = sqlite3.connect("races.db")
-            df.to_sql(year_selector, conn, if_exists='replace')
+            df.to_sql(year_selector, conn, if_exists='replace', index=False)
             conn.commit()
             conn.close()
             st.write("✅ New data has been successfully uploaded")
@@ -109,27 +110,26 @@ create_new_race = st.button("Create new race")
 
 
 if create_new_race:
-    if uploaded_new is not None and race_name is not None and end_date is not None and race_name[0].isalpha():
+    if uploaded_new is not None and race_name is not None and end_date is not None and race_name[0].isalpha() and race_name != "info":
 
         new_df = df1
         st.write(new_df)
         start_date = new_df['Date'].loc[0]
         if race_name not in [i.race_name for i in races]:
             st.write("✅writing new information")
-            new_info_df = pd.read_csv('info.csv')
-            new_info_df.loc[len(new_info_df)] = [f"{race_name}", new_df['Date'].loc[0].date(), end_date]
-            new_info_df.to_csv("info.csv",index=False)
-            st.write("✅info sheet updated")
             conn = sqlite3.connect("races.db")
+            new_info_df = pd.read_sql('SELECT * FROM info', conn)
+            new_info_df.loc[len(new_info_df)] = [f"{race_name}", new_df['Date'].loc[0].date(), end_date]
+            new_info_df.to_sql("info", conn, index=False, if_exists='replace')
             new_df.to_sql(race_name, conn)
             conn.commit()
             conn.close()
             st.write("✅database updated")
         else:
-            st.write("❌name already exists, choose a different name")
+            st.write("❌name already exists, choose a different name ('info' is also not permited as a race name)")
     else:
         st.write("❌unable to write file")
-        st.write(f"new_uploaded_file={new_uploaded_file is not None}, race_name={race_name is not None}, end_date = {end_date is not None}, race_name= {race_name[0].isalpha()}")
-        if not race_name[0].isalpha():
-            st.write("❌Race name must start with a letter")
+        st.write(f"new_uploaded_file={new_uploaded_file is not None}, race_name={race_name is not None}, end_date = {end_date is not None}, race_name= {race_name[0].isalpha()}, race_name is not named 'info'={race_name != "info"}")
+        if not race_name[0].isalpha() or race_name == "info":
+            st.write("❌Race name must start with a letter and NOT be 'info'")
 
