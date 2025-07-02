@@ -8,4 +8,3 @@ to set up on a local machine:
 6) Check the box on installing the reqirements
 7) hit okay
 8) in terminal (where venv is active) type 'streamlit run dashboard.py'
-9) test
