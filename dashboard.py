@@ -5,30 +5,15 @@ from class_init import *
 from dashboardHelper import *
 import os
 import pandas as pd
+
+check_requirements_installed()
 if not authenticate_user():
     st.stop()
 
 
-if not os.path.exists(".env"):
-    st.write(".env file not found -- for this website to work, it must be copied over -- stoping website")
-    st.stop()
-
-if not os.path.exists("races.db"):
-    st.write("races.db file not found -- stopping website (required for website to function)")
-    st.stop()
 
 
-# initialize info class
-info = Information()
-info_df = info.dataframe
-
-races = []
-for i in range(len(info_df.index)):
-    start_date = datetime.strptime(info_df['Registration start date'].iloc[i], "%Y-%m-%d").date()
-    end_date = datetime.strptime(info_df['Registration end date'].iloc[i], "%Y-%m-%d").date()
-    races.append(Race(start_date, end_date, info_df['Name'].iloc[i]))
-
-# alternate:
+races = get_races()
 
 
 

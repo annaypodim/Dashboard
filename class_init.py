@@ -8,9 +8,30 @@ from dotenv import load_dotenv
 import os
 
 
+
+
+def check_requirements_installed():
+    if not os.path.exists(".env") or not os.path.exists("../.env"):
+        st.write(".env file not found -- for this website to work, it must be copied over -- stoping website")
+        st.stop()
+
+    if not os.path.exists("races.db"):
+        st.write("races.db file not found -- stopping website (required for website to function)")
+        st.stop()
+
+
+def load_credentials():
+    if os.path.exists("../.env"):
+        load_dotenv(dotenv_path="../.env")
+    if os.path.exists(".env"):
+        load_dotenv()
+    
+
+
+
 # user auth code
 def creds_entered():
-    load_dotenv()
+    load_credentials()
     if st.session_state["user"].strip() == os.getenv("user") and st.session_state["passwd"].strip() == os.getenv("password"):
         st.session_state["authenticated"] = True
     else:
@@ -97,4 +118,13 @@ class Race:
             frequency.append(len(self.dataframe[(self.dataframe.event == eventt) & (self.dataframe.Date == day)]))
         return frequency
     
+def get_races()->list:
+    info = Information()
+    info_df = info.dataframe
+    races = []
+    for i in range(len(info_df.index)):
+        start_date = datetime.strptime(info_df['Registration start date'].iloc[i], "%Y-%m-%d").date()
+        end_date = datetime.strptime(info_df['Registration end date'].iloc[i], "%Y-%m-%d").date()
+        races.append(Race(start_date, end_date, info_df['Name'].iloc[i]))
+    return races
 

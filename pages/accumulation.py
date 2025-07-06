@@ -2,21 +2,14 @@ import streamlit as st
 from datetime import *
 from class_init import *
 
+
+check_requirements_installed()
 if not authenticate_user():
     st.stop()
 
 
-# initialize info class
-info = Information()
-info_df = info.dataframe
 
-
-
-races = []
-for i in range(len(info_df.index)):
-    start_date = datetime.strptime(info_df['Registration start date'].iloc[i], "%Y-%m-%d").date()
-    end_date = datetime.strptime(info_df['Registration end date'].iloc[i], "%Y-%m-%d").date()
-    races.append(Race(start_date, end_date, info_df['Name'].iloc[i]))
+races = get_races()
 
 today = datetime.today().date()
 

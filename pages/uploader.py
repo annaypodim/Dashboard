@@ -4,21 +4,19 @@ from datetime import datetime, date
 from class_init import *
 import csv
 
-
+check_requirements_installed()
 if not authenticate_user():
     st.stop()
+
+
+
+
 
 # initialize info class
 info = Information()
 info_df = info.dataframe
 
-races = []
-for i in range(len(info_df.index)):
-    start_date = datetime.strptime(info_df['Registration start date'].iloc[i], "%Y-%m-%d").date()
-    end_date = datetime.strptime(info_df['Registration end date'].iloc[i], "%Y-%m-%d").date()
-    races.append(Race(start_date, end_date, info_df['Name'].iloc[i]))
-
-
+races = get_races()
 
 year_selector = st.radio(
     "Select race you want to modify",
@@ -85,9 +83,6 @@ if submit and uploaded:
 st.write("------------------------------------------------------")
 
 st.write("Create a new race below:")
-
-
-
 
 
 new_uploaded_file = st.file_uploader("Upload csv here",type=".csv", accept_multiple_files=False, key="adsklfj")
