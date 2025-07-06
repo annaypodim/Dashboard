@@ -10,8 +10,6 @@ if not authenticate_user():
 
 
 
-
-
 # initialize info class
 info = Information()
 info_df = info.dataframe
@@ -63,11 +61,11 @@ if submit and uploaded:
     st.write(f"CSV is reporting data for: {df['Date'].iloc[0].date()}")
     string = info_df[info_df['Name'] == year_selector]['Registration end date'].iloc[0]
     if today >= pd.Timestamp(df['Date'].iloc[0]).date() and today <= pd.Timestamp(string).date():
-        conn = sqlite3.connect("races.db")
         st.write("✅ data within range of race")
         if pd.Timestamp(df['Date'].iloc[-1]).date() >= pd.Timestamp(ogRace['Date'].iloc[-1]).date():
             st.write("✅ Data is okay to be written and is being written")
-            conn = sqlite3.connect("races.db")
+
+            conn = connect_db()
             df.to_sql(year_selector, conn, if_exists='replace', index=False)
             conn.commit()
             conn.close()
@@ -112,7 +110,7 @@ if create_new_race:
         start_date = new_df['Date'].loc[0]
         if race_name not in [i.race_name for i in races]:
             st.write("✅writing new information")
-            conn = sqlite3.connect("races.db")
+            conn = connect_db()
             new_info_df = pd.read_sql('SELECT * FROM info', conn)
             new_info_df.loc[len(new_info_df)] = [f"{race_name}", new_df['Date'].loc[0].date(), end_date]
             new_info_df.to_sql("info", conn, index=False, if_exists='replace')
