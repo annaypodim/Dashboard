@@ -8,14 +8,18 @@ from dotenv import load_dotenv
 import os
 
 
-
+def connect_db(): 
+    if os.path.exists("../races.db"):
+        return sqlite3.connect("../races.db")
+    elif os.path.exists("races.db"):
+        return sqlite3.connect("races.db")
 
 def check_requirements_installed():
-    if not os.path.exists(".env") or not os.path.exists("../.env"):
+    if not os.path.exists(".env") and not os.path.exists("../.env"):
         st.write(".env file not found -- for this website to work, it must be copied over -- stoping website")
         st.stop()
 
-    if not os.path.exists("races.db"):
+    if not os.path.exists("races.db") and not os.path.exists("../races.db"):
         st.write("races.db file not found -- stopping website (required for website to function)")
         st.stop()
 
@@ -23,7 +27,7 @@ def check_requirements_installed():
 def load_credentials():
     if os.path.exists("../.env"):
         load_dotenv(dotenv_path="../.env")
-    if os.path.exists(".env"):
+    elif os.path.exists(".env"):
         load_dotenv()
     
 
@@ -56,12 +60,14 @@ def authenticate_user():
 
 class Information:
     def __init__(self) -> None:
-        self.conn = sqlite3.connect("races.db", uri=True)
+        # self.conn = sqlite3.connect("races.db", uri=True)
+        self.conn = connect_db()
         self.dataframe = pd.read_sql("SELECT * FROM info", self.conn)
         self.conn.close()
         
     def get_race_by_table_name(self, race_name:str)-> pd.DataFrame:
-        self.conn = sqlite3.connect("races.db", uri=True)
+        # self.conn = sqlite3.connect("races.db", uri=True)
+        self.conn = connect_db()
         d = pd.read_sql(f"SELECT * FROM {race_name}", self.conn)
         self.conn.close()
         return d
