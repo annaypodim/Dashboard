@@ -81,7 +81,7 @@ class Race:
         self.start_date = start_date
         self.end_date = end_date
         self.race_name = race_name
-        self.conn = sqlite3.connect('races.db')
+        self.conn = connect_db()
         self.dataframe = pd.read_sql(f"SELECT * FROM {self.race_name}", self.conn)
         self.conn.close()
         for i in range(len(self.dataframe)):
