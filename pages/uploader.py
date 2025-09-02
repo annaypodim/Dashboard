@@ -122,7 +122,13 @@ if create_new_race:
             st.write("❌name already exists, choose a different name ('info' is also not permited as a race name)")
     else:
         st.write("❌unable to write file")
-        st.write(f"new_uploaded_file={new_uploaded_file is not None}, race_name={race_name is not None}, end_date = {end_date is not None}, race_name= {race_name[0].isalpha()}, race_name is not named \'info\'={race_name != "info"}")
+        st.write(
+            f"new_uploaded_file={new_uploaded_file is not None}, "
+            f"race_name={race_name is not None}, " 
+            f"end_date = {end_date is not None}, "
+            f"race_name= {race_name[0].isalpha()}, "
+            "race_name is not named 'info'=", {race_name != "info"}
+            )
         if not race_name[0].isalpha() or race_name == "info":
             st.write("❌Race name must start with a letter and NOT be 'info'")
 
