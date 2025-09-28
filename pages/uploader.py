@@ -56,20 +56,8 @@ if uploaded_file is not None:
 
 submit = st.button("submit")
 
-data = pd.read_csv(uploaded_file, dtype=str, usecols=['Participant ID','Date Registered','Sex','City','State','ZIP/Postal Code','Country','Sub-event','Age'])
-df = pd.DataFrame(data).fillna("")
-df = df.rename(columns={"Sub-event": "event", "Date Registered": "Date"})
-st.write("outside if")
-st.write("today:", today)
-st.write("first row:", pd.Timestamp(df['Date'].iloc[0]).date())
-st.write("last row:", pd.Timestamp(df['Date'].iloc[-1]).date())
 
 if submit and uploaded:
-    st.write("Inside If")
-    st.write(f"CSV is reporting data for: {df['Date'].iloc[0].date()}")
-    st.write("today:", today)
-    st.write("first row:", pd.Timestamp(df['Date'].iloc[0]).date())
-    st.write("last row:", pd.Timestamp(df['Date'].iloc[-1]).date())
     string = info_df[info_df['Name'] == year_selector]['Registration end date'].iloc[0]
     if today >= pd.Timestamp(df['Date'].iloc[0]).date() and today <= pd.Timestamp(string).date():
         st.write("✅ data within range of race")
