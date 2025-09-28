@@ -57,7 +57,9 @@ if uploaded_file is not None:
 submit = st.button("submit")
 
 
+
 if submit and uploaded:
+    st.write(f"CSV is reporting data for: {df['Date'].iloc[0].date()}")
     string = info_df[info_df['Name'] == year_selector]['Registration end date'].iloc[0]
     if today >= pd.Timestamp(df['Date'].iloc[0]).date() and today <= pd.Timestamp(string).date():
         st.write("✅ data within range of race")
