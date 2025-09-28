@@ -60,7 +60,6 @@ st.write("outside if")
 st.write("today:", today)
 st.write("first row:", pd.Timestamp(df['Date'].iloc[0]).date())
 st.write("last row:", pd.Timestamp(df['Date'].iloc[-1]).date())
-st.write("race end:", race_end)
 
 if submit and uploaded:
     st.write("Inside If")
@@ -68,7 +67,6 @@ if submit and uploaded:
     st.write("today:", today)
     st.write("first row:", pd.Timestamp(df['Date'].iloc[0]).date())
     st.write("last row:", pd.Timestamp(df['Date'].iloc[-1]).date())
-    st.write("race end:", race_end)
     string = info_df[info_df['Name'] == year_selector]['Registration end date'].iloc[0]
     if today >= pd.Timestamp(df['Date'].iloc[0]).date() and today <= pd.Timestamp(string).date():
         st.write("✅ data within range of race")
