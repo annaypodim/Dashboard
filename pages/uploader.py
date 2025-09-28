@@ -53,17 +53,12 @@ if uploaded_file is not None:
     uploaded = True
     st.write(f"{len(df)-len(ogRace)} new rows to be added")
 
-
 submit = st.button("submit")
 
-print("today: ",  today)
-print("year_selector: ", year_selector)
 
 if submit and uploaded:
     st.write(f"CSV is reporting data for: {df['Date'].iloc[0].date()}")
-
     string = info_df[info_df['Name'] == year_selector]['Registration end date'].iloc[0]
-    print("final date: ", pd.Timestamp(string).date())
     if today >= pd.Timestamp(df['Date'].iloc[0]).date() and today <= pd.Timestamp(string).date():
         st.write("✅ data within range of race")
         if pd.Timestamp(df['Date'].iloc[-1]).date() >= pd.Timestamp(ogRace['Date'].iloc[-1]).date():
