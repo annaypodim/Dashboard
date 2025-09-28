@@ -56,6 +56,9 @@ if uploaded_file is not None:
 
 submit = st.button("submit")
 
+data = pd.read_csv(uploaded_file, dtype=str, usecols=['Participant ID','Date Registered','Sex','City','State','ZIP/Postal Code','Country','Sub-event','Age'])
+df = pd.DataFrame(data).fillna("")
+df = df.rename(columns={"Sub-event": "event", "Date Registered": "Date"})
 st.write("outside if")
 st.write("today:", today)
 st.write("first row:", pd.Timestamp(df['Date'].iloc[0]).date())
