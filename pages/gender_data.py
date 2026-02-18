@@ -28,7 +28,7 @@ race_selector = st.selectbox(
     [r.race_name for r in reversed(races)]
 )
 
-st.write(f'Currently viewing city data for: **{race_selector}**')
+st.write(f'Currently viewing gender data for: **{race_selector}**')
 
 # load race data
 try:
@@ -44,42 +44,23 @@ if missing_cols:
     st.error(f'The following required columns are missing in this race table: {missing_cols}')
     st.stop()
 
-# ensure city column is consistent
-df['City'] = df['City'].fillna('').str.strip().str.lower()
-
-if df['City'].eq('').all():
-    st.warning('No city data found for this race.')
-    st.stop()
-
-# calculate counts and percentages
-city_counts = df['City'].value_counts().reset_index()
-city_counts.columns = ['city', 'count']
-
 total_registrants = len(df)
-city_counts['percentage'] = (round(((city_counts['count'] / total_registrants) * 100), 2)).astype(str) + ' %'
 
-# display all cities
-st.subheader('all cities')
+# --- gender breakdown ---
+st.subheader('registrant gender breakdown')
 
-st.write(f'total registrants: **{total_registrants}**')
+gender_map = {'M': 'male', 'F': 'female', 'U': 'unknown', 'N': 'N/A'}
+df['Sex'] = df['Sex'].fillna('').str.strip().str.upper().map(gender_map).fillna('Unknown')
 
-st.dataframe(city_counts, use_container_width=True)
-print(city_counts)
+gender_counts = df['Sex'].value_counts().reset_index()
+gender_counts.columns = ['gender', 'count']
+gender_counts['percentage'] = (round(((gender_counts['count'] / total_registrants) * 100), 2)).astype(str) + ' %'
 
-# display top 5 cities
-st.subheader('top 5 cities')
+st.dataframe(gender_counts, use_container_width=True)
 
-top_5 = city_counts.head(5)
-
-st.dataframe(top_5, use_container_width=True)
-
-st.subheader('by city')
-city_pct_raw = (city_counts['count'] / total_registrants) * 100
-city_pie = city_counts.copy()
-city_pie['city'] = city_pie['city'].where(city_pct_raw > 1, 'other')
-city_pie = city_pie.groupby('city', as_index=False)['count'].sum()
-fig = px.pie(city_pie, values='count', names='city')
-fig.update_traces(textinfo='label')
-st.plotly_chart(fig)
+st.subheader('by gender')
+fig_gender = px.pie(gender_counts, values='count', names='gender')
+fig_gender.update_traces(textinfo='label')
+st.plotly_chart(fig_gender)
 
 conn.close()
