@@ -28,7 +28,7 @@ race_selector = st.selectbox(
     [r.race_name for r in reversed(races)]
 )
 
-st.write(f'Currently viewing city data for: **{race_selector}**')
+st.write(f'Currently viewing age data for: **{race_selector}**')
 
 # load race data
 try:
@@ -44,42 +44,34 @@ if missing_cols:
     st.error(f'The following required columns are missing in this race table: {missing_cols}')
     st.stop()
 
-# ensure city column is consistent
-df['City'] = df['City'].fillna('').str.strip().str.lower()
-
-if df['City'].eq('').all():
-    st.warning('No city data found for this race.')
-    st.stop()
-
-# calculate counts and percentages
-city_counts = df['City'].value_counts().reset_index()
-city_counts.columns = ['city', 'count']
-
 total_registrants = len(df)
-city_counts['percentage'] = (round(((city_counts['count'] / total_registrants) * 100), 2)).astype(str) + ' %'
 
-# display all cities
-st.subheader('all cities')
+# --- age breakdown ---
+st.subheader('registrant age breakdown')
 
-st.write(f'total registrants: **{total_registrants}**')
+df['Age'] = pd.to_numeric(df['Age'], errors='coerce')
+age_bins = [-1, 19, 39, 49, 59, float('inf')]
+age_labels = ['0-19', '20-39', '40-49', '50-59', '60+']
+df['age_group'] = pd.cut(df['Age'], bins=age_bins, labels=age_labels, right=True)
 
-st.dataframe(city_counts, use_container_width=True)
-print(city_counts)
+age_counts = df['age_group'].value_counts().reindex(age_labels).dropna().reset_index()
+age_counts.columns = ['age group', 'count']
+age_counts['percentage'] = (round(((age_counts['count'] / total_registrants) * 100), 2)).astype(str) + ' %'
 
-# display top 5 cities
-st.subheader('top 5 cities')
+st.dataframe(age_counts, use_container_width=True)
 
-top_5 = city_counts.head(5)
+st.subheader('by age')
+df_age_raw = df['Age'].dropna().astype(int).value_counts().sort_index().reset_index()
+df_age_raw.columns = ['age', 'count']
+fig_age_raw = px.bar(df_age_raw, x='age', y='count')
+st.plotly_chart(fig_age_raw)
 
-st.dataframe(top_5, use_container_width=True)
+st.subheader('by age group')
+fig_age_bar = px.bar(age_counts, x='age group', y='count')
+st.plotly_chart(fig_age_bar)
 
-st.subheader('by city')
-city_pct_raw = (city_counts['count'] / total_registrants) * 100
-city_pie = city_counts.copy()
-city_pie['city'] = city_pie['city'].where(city_pct_raw > 1, 'other')
-city_pie = city_pie.groupby('city', as_index=False)['count'].sum()
-fig = px.pie(city_pie, values='count', names='city')
-fig.update_traces(textinfo='label')
-st.plotly_chart(fig)
+fig_age_pie = px.pie(age_counts, values='count', names='age group')
+fig_age_pie.update_traces(textinfo='label')
+st.plotly_chart(fig_age_pie)
 
 conn.close()
