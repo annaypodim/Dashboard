@@ -1,9 +1,6 @@
 import streamlit as st
-import streamlit as st
-from datetime import *
-from class_init import *
-from dashboardHelper import *
-import os
+from class_init import check_requirements_installed, authenticate_user, get_races
+from dashboardHelper import graph_it
 import pandas as pd
 
 check_requirements_installed()

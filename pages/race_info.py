@@ -1,5 +1,5 @@
 import streamlit as st
-from class_init import *
+from class_init import check_requirements_installed, authenticate_user, Information
 
 check_requirements_installed()
 if not authenticate_user():
