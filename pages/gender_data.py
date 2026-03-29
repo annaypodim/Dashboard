@@ -1,15 +1,14 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
+import plotly.express as px
 from datetime import datetime
-from class_init import *
+from class_init import (
+    authenticate_user, connect_db, Information, Race, _validate_table_name
+)
 
 # authenticate user check
 if not authenticate_user():
     st.stop()
-
-# connect to sqlite database
-conn = sqlite3.connect('races.db')
 
 # load race info from dashboard
 info = Information()
@@ -30,12 +29,16 @@ race_selector = st.selectbox(
 
 st.write(f'Currently viewing gender data for: **{race_selector}**')
 
-# load race data
+# load race data with validated table name
+conn = connect_db()
 try:
-    df = pd.read_sql(f'SELECT * FROM {race_selector}', conn)
+    safe_name = _validate_table_name(race_selector)
+    df = pd.read_sql(f'SELECT * FROM [{safe_name}]', conn)
 except Exception as e:
     st.error(f'Error loading data for {race_selector}: {e}')
     st.stop()
+finally:
+    conn.close()
 
 # ensure uploaded column names match expected raceroster column names
 expected_columns = ['Participant ID', 'Date', 'Sex', 'City', 'State', 'ZIP/Postal Code', 'Country', 'event', 'Age']
@@ -62,5 +65,3 @@ st.subheader('by gender')
 fig_gender = px.pie(gender_counts, values='count', names='gender')
 fig_gender.update_traces(textinfo='label')
 st.plotly_chart(fig_gender)
-
-conn.close()

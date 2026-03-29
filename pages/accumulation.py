@@ -1,6 +1,6 @@
 import streamlit as st
-from datetime import *
-from class_init import *
+from datetime import datetime
+from class_init import check_requirements_installed, authenticate_user, get_races
 
 
 check_requirements_installed()

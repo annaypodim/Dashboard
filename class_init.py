@@ -1,46 +1,68 @@
 import pandas as pd
-from datetime import *
-from operator import *
+from datetime import datetime, timedelta, date
 import plotly.express as px
 import streamlit as st
 import sqlite3
+import re
 from dotenv import load_dotenv
 import os
 
 
-def connect_db(): 
+# Allowlist pattern for table names — only alphanumeric and underscores allowed.
+# This prevents SQL injection when table names are interpolated into queries,
+# since parameterized queries (? placeholders) don't work for table/column names in SQL.
+TABLE_NAME_PATTERN = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+
+
+def _validate_table_name(name: str) -> str:
+    """Validate and return a safe table name, or raise ValueError."""
+    if not name or not TABLE_NAME_PATTERN.match(name):
+        raise ValueError(f"Invalid table name: {name!r}")
+    return name
+
+
+def connect_db():
+    """Connect to the SQLite database, checking both possible locations."""
     if os.path.exists("../races.db"):
         return sqlite3.connect("../races.db")
     elif os.path.exists("races.db"):
         return sqlite3.connect("races.db")
+    else:
+        raise FileNotFoundError("races.db not found in current or parent directory")
+
 
 def check_requirements_installed():
     if not os.path.exists(".env") and not os.path.exists("../.env"):
-        st.write(".env file not found -- for this website to work, it must be copied over -- stoping website")
+        st.error(".env file not found -- for this website to work, it must be copied over -- stopping website")
         st.stop()
 
     if not os.path.exists("races.db") and not os.path.exists("../races.db"):
-        st.write("races.db file not found -- stopping website (required for website to function)")
+        st.error("races.db file not found -- stopping website (required for website to function)")
         st.stop()
 
 
 def load_credentials():
     if os.path.exists("../.env"):
-        load_dotenv(dotenv_path="../.env")
+        load_dotenv(dotenv_path="../.env", override=True)
     elif os.path.exists(".env"):
-        load_dotenv()
-    
-
+        load_dotenv(override=True)
 
 
 # user auth code
 def creds_entered():
     load_credentials()
-    if st.session_state["user"].strip() == os.getenv("user") and st.session_state["passwd"].strip() == os.getenv("password"):
+    expected_user = os.getenv("user")
+    expected_pass = os.getenv("password")
+    if expected_user is None or expected_pass is None:
+        st.error("Credentials not configured in .env file")
+        st.session_state["authenticated"] = False
+        return
+    if st.session_state["user"].strip() == expected_user and st.session_state["passwd"].strip() == expected_pass:
         st.session_state["authenticated"] = True
     else:
         st.session_state["authenticated"] = False
         st.error("Invalid username/password")
+
 
 def authenticate_user():
     if "authenticated" not in st.session_state:
@@ -60,16 +82,19 @@ def authenticate_user():
 
 class Information:
     def __init__(self) -> None:
-        # self.conn = sqlite3.connect("races.db", uri=True)
-        self.conn = connect_db()
-        self.dataframe = pd.read_sql("SELECT * FROM info", self.conn)
-        self.conn.close()
-        
-    def get_race_by_table_name(self, race_name:str)-> pd.DataFrame:
-        # self.conn = sqlite3.connect("races.db", uri=True)
-        self.conn = connect_db()
-        d = pd.read_sql(f"SELECT * FROM {race_name}", self.conn)
-        self.conn.close()
+        conn = connect_db()
+        try:
+            self.dataframe = pd.read_sql("SELECT * FROM info", conn)
+        finally:
+            conn.close()
+
+    def get_race_by_table_name(self, race_name: str) -> pd.DataFrame:
+        safe_name = _validate_table_name(race_name)
+        conn = connect_db()
+        try:
+            d = pd.read_sql(f"SELECT * FROM [{safe_name}]", conn)
+        finally:
+            conn.close()
         return d
 
         
@@ -80,13 +105,15 @@ class Race:
     def __init__(self, start_date: datetime, end_date: datetime, race_name: str) -> None:
         self.start_date = start_date
         self.end_date = end_date
-        self.race_name = race_name
-        self.conn = connect_db()
-        self.dataframe = pd.read_sql(f"SELECT * FROM {self.race_name}", self.conn)
-        self.conn.close()
-        for i in range(len(self.dataframe)):
-            string = self.dataframe['Date'].iloc[i]
-            self.dataframe.at[i, 'Date'] = datetime.strptime(string, '%Y-%m-%d %H:%M:%S').date()
+        self.race_name = _validate_table_name(race_name)
+        conn = connect_db()
+        try:
+            self.dataframe = pd.read_sql(f"SELECT * FROM [{self.race_name}]", conn)
+        finally:
+            conn.close()
+        # Convert date strings to date objects using vectorized pandas parsing
+        # (much faster than row-by-row loop for large datasets)
+        self.dataframe['Date'] = pd.to_datetime(self.dataframe['Date']).dt.date
 
 
     # returns dataframe of events participants by a certian day and total
@@ -124,13 +151,14 @@ class Race:
             frequency.append(len(self.dataframe[(self.dataframe.event == eventt) & (self.dataframe.Date == day)]))
         return frequency
     
-def get_races()->list:
+def get_races() -> list:
     info = Information()
     info_df = info.dataframe
     races = []
     for i in range(len(info_df.index)):
         start_date = datetime.strptime(info_df['Registration start date'].iloc[i], "%Y-%m-%d").date()
         end_date = datetime.strptime(info_df['Registration end date'].iloc[i], "%Y-%m-%d").date()
-        races.append(Race(start_date, end_date, info_df['Name'].iloc[i]))
+        name = info_df['Name'].iloc[i]
+        races.append(Race(start_date, end_date, name))
     return races
 
