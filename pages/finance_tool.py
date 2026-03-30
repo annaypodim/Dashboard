@@ -3,7 +3,9 @@ import pandas as pd
 import sqlite3
 import plotly.graph_objects as go
 from datetime import datetime
-from class_init import *
+from class_init import (
+    authenticate_user, connect_db, Information, Race, _validate_table_name
+)
 
 # authenticate user check
 if not authenticate_user():
