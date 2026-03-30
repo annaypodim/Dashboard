@@ -56,12 +56,12 @@ gender_map = {'M': 'male', 'F': 'female', 'U': 'unknown', 'N': 'N/A'}
 df['Sex'] = df['Sex'].fillna('').str.strip().str.upper().map(gender_map).fillna('Unknown')
 
 gender_counts = df['Sex'].value_counts().reset_index()
-gender_counts.columns = ['gender', 'count']
-gender_counts['percentage'] = (round(((gender_counts['count'] / total_registrants) * 100), 2)).astype(str) + ' %'
+gender_counts.columns = ['gender', 'registrants']
+gender_counts['percentage'] = (round(((gender_counts['registrants'] / total_registrants) * 100), 2)).astype(str) + ' %'
 
-st.dataframe(gender_counts, use_container_width=True)
+st.dataframe(gender_counts, use_container_width=True, hide_index=True)
 
 st.subheader('by gender')
-fig_gender = px.pie(gender_counts, values='count', names='gender')
+fig_gender = px.pie(gender_counts, values='registrants', names='gender')
 fig_gender.update_traces(textinfo='label')
 st.plotly_chart(fig_gender)

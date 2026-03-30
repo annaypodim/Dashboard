@@ -53,26 +53,26 @@ total_registrants = len(df)
 st.subheader('registrant age breakdown')
 
 df['Age'] = pd.to_numeric(df['Age'], errors='coerce')
-age_bins = [-1, 19, 39, 49, 59, float('inf')]
-age_labels = ['0-19', '20-39', '40-49', '50-59', '60+']
+age_bins = [-1, 9, 19, 29, 39, 49, 59, 69, 79, float('inf')]
+age_labels = ['0-9', '10-19', '20-29', '30-39', '40-49', '50-59', '60-69', '70-79', '80+']
 df['age_group'] = pd.cut(df['Age'], bins=age_bins, labels=age_labels, right=True)
 
 age_counts = df['age_group'].value_counts().reindex(age_labels).dropna().reset_index()
-age_counts.columns = ['age group', 'count']
-age_counts['percentage'] = (round(((age_counts['count'] / total_registrants) * 100), 2)).astype(str) + ' %'
+age_counts.columns = ['age group', 'registrants']
+age_counts['percentage'] = (round(((age_counts['registrants'] / total_registrants) * 100), 2)).astype(str) + ' %'
 
-st.dataframe(age_counts, use_container_width=True)
+st.dataframe(age_counts, use_container_width=True, hide_index=True)
 
 st.subheader('by age')
 df_age_raw = df['Age'].dropna().astype(int).value_counts().sort_index().reset_index()
-df_age_raw.columns = ['age', 'count']
-fig_age_raw = px.bar(df_age_raw, x='age', y='count')
+df_age_raw.columns = ['age', 'registrants']
+fig_age_raw = px.bar(df_age_raw, x='age', y='registrants')
 st.plotly_chart(fig_age_raw)
 
 st.subheader('by age group')
-fig_age_bar = px.bar(age_counts, x='age group', y='count')
+fig_age_bar = px.bar(age_counts, x='age group', y='registrants')
 st.plotly_chart(fig_age_bar)
 
-fig_age_pie = px.pie(age_counts, values='count', names='age group')
+fig_age_pie = px.pie(age_counts, values='registrants', names='age group')
 fig_age_pie.update_traces(textinfo='label')
 st.plotly_chart(fig_age_pie)

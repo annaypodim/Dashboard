@@ -56,30 +56,30 @@ if df['City'].eq('').all():
 
 # calculate counts and percentages
 city_counts = df['City'].value_counts().reset_index()
-city_counts.columns = ['city', 'count']
+city_counts.columns = ['city', 'registrants']
 
 total_registrants = len(df)
-city_counts['percentage'] = (round(((city_counts['count'] / total_registrants) * 100), 2)).astype(str) + ' %'
+city_counts['percentage'] = (round(((city_counts['registrants'] / total_registrants) * 100), 2)).astype(str) + ' %'
 
 # display all cities
 st.subheader('all cities')
 
 st.write(f'total registrants: **{total_registrants}**')
 
-st.dataframe(city_counts, use_container_width=True)
+st.dataframe(city_counts, use_container_width=True, hide_index=True)
 
 # display top 5 cities
 st.subheader('top 5 cities')
 
 top_5 = city_counts.head(5)
 
-st.dataframe(top_5, use_container_width=True)
+st.dataframe(top_5, use_container_width=True, hide_index=True)
 
 st.subheader('by city')
-city_pct_raw = (city_counts['count'] / total_registrants) * 100
+city_pct_raw = (city_counts['registrants'] / total_registrants) * 100
 city_pie = city_counts.copy()
 city_pie['city'] = city_pie['city'].where(city_pct_raw > 1, 'other')
-city_pie = city_pie.groupby('city', as_index=False)['count'].sum()
-fig = px.pie(city_pie, values='count', names='city')
+city_pie = city_pie.groupby('city', as_index=False)['registrants'].sum()
+fig = px.pie(city_pie, values='registrants', names='city')
 fig.update_traces(textinfo='label')
 st.plotly_chart(fig)
