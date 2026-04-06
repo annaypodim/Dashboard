@@ -23,8 +23,11 @@ api_key = os.environ.get("OPENAI_API_KEY", "")
 if not api_key:
     entered_key = st.text_input("OpenAI API Key", type="password")
     if entered_key:
-        # persist to .env so it's loaded automatically next time
-        env_path = "../.env" if os.path.exists("../.env") else ".env"
+        # persist to .env — use same resolution as load_credentials()
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env_path = os.path.join(project_root, ".env")
+        if not os.path.exists(env_path):
+            env_path = os.path.join(project_root, "..", ".env")
         with open(env_path, "a") as f:
             f.write(f"\nOPENAI_API_KEY={entered_key}\n")
         os.environ["OPENAI_API_KEY"] = entered_key
