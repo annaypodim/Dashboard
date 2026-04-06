@@ -1,0 +1,202 @@
+[
+  {
+    "id": 1,
+    "question": "How many total registrations were there for race_2024?",
+    "expected_sql_pattern": "SELECT COUNT",
+    "expected_result": {"rows": 1, "value": 1162},
+    "difficulty": "easy",
+    "category": "count"
+  },
+  {
+    "id": 2,
+    "question": "How many female registrants signed up for the 5K in 2024?",
+    "expected_sql_pattern": "Sex.*F.*5K|5K.*Sex.*F",
+    "expected_result": {"rows": 1, "value": 194},
+    "difficulty": "medium",
+    "category": "filtered_count"
+  },
+  {
+    "id": 3,
+    "question": "What are the top 5 cities for race_2024?",
+    "expected_sql_pattern": "LIMIT 5",
+    "expected_result": {"rows": 5, "first_value": "Belmont"},
+    "difficulty": "medium",
+    "category": "ranking"
+  },
+  {
+    "id": 4,
+    "question": "Show me registrations by event type for race_2024",
+    "expected_sql_pattern": "GROUP BY.*event|event.*GROUP BY",
+    "expected_result": {"rows": 7},
+    "difficulty": "easy",
+    "category": "groupby"
+  },
+  {
+    "id": 5,
+    "question": "What are the total registrations for each year?",
+    "expected_sql_pattern": "UNION ALL",
+    "expected_result": {"rows": 4, "values": [881, 994, 1162, 86]},
+    "difficulty": "hard",
+    "category": "cross_table"
+  },
+  {
+    "id": 6,
+    "question": "How many male vs female registrants were there in race_2023?",
+    "expected_sql_pattern": "Sex",
+    "expected_result": {"rows": 2, "values_unordered": {"F": 468, "M": 516}},
+    "difficulty": "medium",
+    "category": "comparison"
+  },
+  {
+    "id": 7,
+    "question": "How many people registered for the 10K in 2023?",
+    "expected_sql_pattern": "10K.*race_2023|race_2023.*10K",
+    "expected_result": {"rows": 1, "value": 197},
+    "difficulty": "easy",
+    "category": "filtered_count"
+  },
+  {
+    "id": 8,
+    "question": "How many registrants were there 3 days before race_2024?",
+    "expected_sql_pattern": "date|Date",
+    "expected_result": {"rows": 1, "value": 971},
+    "difficulty": "hard",
+    "category": "date_calc"
+  },
+  {
+    "id": 9,
+    "question": "What events were available in race_2022?",
+    "expected_sql_pattern": "DISTINCT.*event|event.*DISTINCT",
+    "expected_result": {"rows": 8},
+    "difficulty": "easy",
+    "category": "distinct"
+  },
+  {
+    "id": 10,
+    "question": "Compare 5K registrations between race_2022 and race_2024",
+    "expected_sql_pattern": "5K",
+    "expected_result": {"rows": 2, "values_unordered": {"race_2022": 351, "race_2024": 425}},
+    "difficulty": "hard",
+    "category": "cross_table"
+  },
+  {
+    "id": 11,
+    "question": "How many unique events are there in race_2024?",
+    "expected_sql_pattern": "COUNT.*DISTINCT|DISTINCT.*event",
+    "expected_result": {"rows": 1, "value": 7},
+    "difficulty": "easy",
+    "category": "count"
+  },
+  {
+    "id": 12,
+    "question": "Which year had the most registrations?",
+    "expected_sql_pattern": "UNION ALL|ORDER BY",
+    "expected_result": {"rows": 1, "first_value": "race_2024"},
+    "difficulty": "hard",
+    "category": "cross_table"
+  },
+  {
+    "id": 13,
+    "question": "What percentage of race_2024 registrants signed up for the 5K?",
+    "expected_sql_pattern": "5K",
+    "expected_result": {"rows": 1, "value_approx": 36.57, "tolerance": 1.0},
+    "difficulty": "hard",
+    "category": "calculation"
+  },
+  {
+    "id": 14,
+    "question": "Show the registration count by sex for the 10K in race_2024",
+    "expected_sql_pattern": "Sex.*10K|10K.*Sex",
+    "expected_result": {"rows_gte": 2},
+    "difficulty": "medium",
+    "category": "filtered_groupby"
+  },
+  {
+    "id": 15,
+    "question": "When did registration open and close for race_2023?",
+    "expected_sql_pattern": "info.*race_2023|race_2023.*info",
+    "expected_result": {"rows": 1, "contains": ["2023-04-28", "2023-10-14"]},
+    "difficulty": "medium",
+    "category": "metadata"
+  },
+  {
+    "id": 16,
+    "question": "How many female 10K runners were there each year?",
+    "expected_sql_pattern": "UNION ALL",
+    "expected_result": {"rows": 3, "values_unordered": {"race_2022": 79, "race_2023": 78, "race_2024": 76}},
+    "difficulty": "hard",
+    "category": "cross_table_demographic"
+  },
+  {
+    "id": 17,
+    "question": "What are the top 5 cities for male 5K registrants in race_2024?",
+    "expected_sql_pattern": "Sex.*M.*5K|5K.*Sex.*M",
+    "expected_result": {"rows": 5, "first_value": "Belmont"},
+    "difficulty": "hard",
+    "category": "filtered_ranking"
+  },
+  {
+    "id": 18,
+    "question": "How many registrations were there 7 days before the race across all years?",
+    "expected_sql_pattern": "UNION ALL",
+    "expected_result": {"rows": 4, "values_unordered": {"race_2022": 658, "race_2023": 764, "race_2024": 835, "race_2025": 86}},
+    "difficulty": "hard",
+    "category": "cross_table_date_calc"
+  },
+  {
+    "id": 19,
+    "question": "Show the sex breakdown for the Kids Fun Run across all years",
+    "expected_sql_pattern": "UNION ALL",
+    "expected_result": {"rows_gte": 6},
+    "difficulty": "hard",
+    "category": "cross_table_demographic"
+  },
+  {
+    "id": 20,
+    "question": "What is the average age of 5K runners for each year?",
+    "expected_sql_pattern": "AVG.*Age|Age.*AVG",
+    "expected_result": {"rows": 3, "values_approx_unordered": {"race_2022": 36.7, "race_2023": 34.2, "race_2024": 33.7}, "tolerance": 1.0},
+    "difficulty": "hard",
+    "category": "cross_table_calculation"
+  },
+  {
+    "id": 21,
+    "question": "Which event had the most registrations in race_2023?",
+    "expected_sql_pattern": "ORDER BY.*DESC.*LIMIT 1|LIMIT 1",
+    "expected_result": {"rows": 1, "first_value": "5K"},
+    "difficulty": "medium",
+    "category": "ranking"
+  },
+  {
+    "id": 22,
+    "question": "How many people had registered 14 days before the race for each year?",
+    "expected_sql_pattern": "UNION ALL",
+    "expected_result": {"rows": 4, "values_unordered": {"race_2022": 522, "race_2023": 665, "race_2024": 747, "race_2025": 86}},
+    "difficulty": "hard",
+    "category": "cross_table_date_calc"
+  },
+  {
+    "id": 23,
+    "question": "What is the percentage of female registrants for each event in race_2024?",
+    "expected_sql_pattern": "Sex.*F|F.*Sex",
+    "expected_result": {"rows": 7},
+    "difficulty": "hard",
+    "category": "demographic_calculation"
+  },
+  {
+    "id": 24,
+    "question": "Compare Fido Mile registrations across all years",
+    "expected_sql_pattern": "Fido|fido|FIDO",
+    "expected_result": {"rows": 3, "values_unordered": {"race_2022": 122, "race_2023": 177, "race_2024": 138}},
+    "difficulty": "hard",
+    "category": "cross_table_filtered"
+  },
+  {
+    "id": 25,
+    "question": "How did male 5K registrations change from 2022 to 2024?",
+    "expected_sql_pattern": "Sex.*M.*5K|5K.*Sex.*M",
+    "expected_result": {"rows": 2},
+    "difficulty": "hard",
+    "category": "cross_table_demographic"
+  }
+]

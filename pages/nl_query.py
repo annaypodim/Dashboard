@@ -17,15 +17,26 @@ check_requirements_installed()
 if not authenticate_user():
     st.stop()
 
-# api key check
+# api key check — load from .env so user only enters once ever
 api_key = os.environ.get("OPENAI_API_KEY", "")
 
 if not api_key:
-    api_key = st.text_input("OpenAI API Key", type="password")
+    entered_key = st.text_input("OpenAI API Key", type="password")
+    if entered_key:
+        # persist to .env — use same resolution as load_credentials()
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env_path = os.path.join(project_root, ".env")
+        if not os.path.exists(env_path):
+            env_path = os.path.join(project_root, "..", ".env")
+        with open(env_path, "a") as f:
+            f.write(f"\nOPENAI_API_KEY={entered_key}\n")
+        os.environ["OPENAI_API_KEY"] = entered_key
+        st.rerun()
+    else:
+        st.write("Enter your OpenAI API key above to get started.")
+        st.stop()
+    api_key = entered_key
 
-if not api_key:
-    st.write("Enter your OpenAI API key above to get started.")
-    st.stop()
 
 # model selection
 model = st.selectbox(
@@ -50,21 +61,38 @@ cols = st.columns(3)
 for i, example in enumerate(examples):
     with cols[i % 3]:
         if st.button(example, key=f"example_{i}", use_container_width=True):
-            st.session_state["nl_question"] = example
+            st.session_state["prefill_question"] = example
+            st.rerun()
 
 # question input
 st.subheader('your question')
 
+# if an example was clicked, pre-fill the text box (but don't auto-run)
+prefill = st.session_state.pop("prefill_question", None)
+if prefill:
+    st.session_state["question_input"] = prefill
+    st.session_state["just_prefilled"] = True
+
+def _on_input_change():
+    st.session_state["input_submitted"] = True
+
 question = st.text_input(
     'Ask a question about the race data:',
-    value=st.session_state.get("nl_question", ""),
     placeholder="e.g., How many people registered for the 5K in 2024?",
     key="question_input",
+    on_change=_on_input_change,
 )
 
 run_query = st.button("Ask", type="primary", use_container_width=True)
 
-# query execution and results
+# on_change fires for both Enter and prefill, so skip if we just prefilled
+if st.session_state.pop("just_prefilled", False):
+    st.session_state.pop("input_submitted", None)
+    run_query = False
+
+if st.session_state.pop("input_submitted", False):
+    run_query = True
+
 if run_query and question:
     with st.spinner("Translating your question and querying the database..."):
         result = ask(question, api_key, model)

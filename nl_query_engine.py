@@ -74,6 +74,12 @@ def get_db_schema() -> str:
             except Exception:
                 pass
             try:
+                cursor.execute(f"SELECT DISTINCT Sex FROM [{safe_table}] LIMIT 10")
+                sexes = [row[0] for row in cursor.fetchall()]
+                sample_info += f"\n  Sex values: {sexes} (M=Male, F=Female, N=Non-binary, U=Unknown)"
+            except Exception:
+                pass
+            try:
                 cursor.execute(f"SELECT Date FROM [{safe_table}] LIMIT 1")
                 date_sample = cursor.fetchone()
                 if date_sample:
@@ -129,7 +135,7 @@ DATABASE SCHEMA:
 """
 
 
-def generate_sql(question: str, api_key: str, model: str = "gpt-4o-mini") -> str:
+def generate_sql(question: str, api_key: str, model: str = "gpt-4o-mini", provider: str = "openai") -> str:
     """
     Uses an LLM to translate a natural language question into a SQL query.
 
@@ -141,7 +147,14 @@ def generate_sql(question: str, api_key: str, model: str = "gpt-4o-mini") -> str
     The user can override to gpt-4o for harder questions if needed.
     """
     schema = get_db_schema()
-    client = OpenAI(api_key=api_key)
+
+    if provider == "gemini":
+        client = OpenAI(
+            api_key=api_key,
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        )
+    else:
+        client = OpenAI(api_key=api_key)
 
     response = client.chat.completions.create(
         model=model,
@@ -224,7 +237,7 @@ def execute_query(sql: str) -> pd.DataFrame:
         conn.close()
 
 
-def ask(question: str, api_key: str, model: str = "gpt-4o-mini") -> dict:
+def ask(question: str, api_key: str, model: str = "gpt-4o-mini", provider: str = "openai") -> dict:
     """
     End-to-end: question in, structured result out.
 
@@ -236,7 +249,7 @@ def ask(question: str, api_key: str, model: str = "gpt-4o-mini") -> dict:
     - chart_hint: suggestion for what visualization to use
     """
     try:
-        sql = generate_sql(question, api_key, model)
+        sql = generate_sql(question, api_key, model, provider)
     except Exception as e:
         return {
             "question": question,
