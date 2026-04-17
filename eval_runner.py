@@ -222,7 +222,7 @@ def run_eval(dataset_path="eval_dataset.json", ids=None, difficulty=None, provid
         # also check SQL pattern if provided
         sql_ok = True
         if case.get("expected_sql_pattern") and result["sql"]:
-            sql_ok = bool(re.search(case["expected_sql_pattern"], result["sql"], re.IGNORECASE))
+            sql_ok = bool(re.search(case["expected_sql_pattern"], result["sql"], re.IGNORECASE | re.DOTALL))
             if not sql_ok:
                 print(f"  SQL pattern '{case['expected_sql_pattern']}' NOT matched")
 
