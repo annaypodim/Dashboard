@@ -120,7 +120,7 @@ SAFETY:
 
 SCHEMA CONVENTIONS:
 2. Each race table (race_2022..race_2025) has the same columns: "index", "Participant ID", Date, Sex, City, State, "ZIP/Postal Code", Country, event, Age. Quote column names containing spaces or slashes.
-3. The 'info' table maps race names ('race_2022', 'race_2023', ...) to "Registration start date" and "Registration end date".
+3. The 'info' table maps race names ('race_2022', 'race_2023', ...) to "Registration start date" and "Registration end date". When answering questions about registration dates / windows, ALWAYS include the Name column in the SELECT so the user can see which race the dates belong to.
 4. Dates are text in 'YYYY-MM-DD HH:MM:SS' format. Use date() or substr(Date,1,10) when comparing.
 5. Sex values are 'M' (male), 'F' (female), 'N' (non-binary), 'U' (unknown).
 6. "registrants" = rows in a race table.
@@ -142,22 +142,16 @@ EVENT NAME MATCHING:
 16. Exact event codes like '5K', '10K' use equality: event='5K' or event='10K'.
 17. Descriptive event phrases refer to ALL event rows whose name contains a matching stem — use LIKE with wildcards, and pick the SHORTEST DISTINCTIVE STEM so variant spellings/apostrophes/suffixes all match.
       - "Fido Mile" or "Fido" → event LIKE '%Fido%' (case-insensitive; captures '1 Mile - Fido Mile', 'FIDO MILE Family member***', 'Additional Fido Escorts')
-      - "Kids Fun Run" or "Kid's Fun Run" → event LIKE '%Kid%Fun Run%' (captures "1 Mile - Kid's Fun Run" and "Parent Escort - 1 Mile Kids' Fun Run"). Do NOT use '%Kids Fun Run%' — the apostrophe form won't match.
+      - "Kids Fun Run" or "Kid's Fun Run" → event = "1 Mile - Kid's Fun Run" (exact match, NOT LIKE). Do NOT include "Parent Escort - 1 Mile Kids' Fun Run" — that's a different event for parents escorting kids, not the Kids Fun Run itself.
       - "Virtual Run" → event LIKE '%Virtual%'
     Use COLLATE NOCASE if the variants have mixed case. Check the schema's "Event counts in this table" lines to confirm which variants exist before writing the LIKE pattern.
 
-OMITTING SPARSE YEARS IN CROSS-YEAR UNION QUERIES:
-18. race_2025 is a sparse dataset (86 total rows, vs 881–1162 for other years).
-19. In per-year UNION ALL queries, decide whether to include race_2025 by the filter type:
-      INCLUDE race_2025 when the query is either:
-        (a) an unfiltered total count ("total registrations each year", "which year had most"), OR
-        (b) filtered ONLY by date/time (e.g. "N days before the race across all years").
-      OMIT race_2025 when the query filters by event (equality or LIKE) OR by Sex OR by any demographic — because 86 rows is too sparse for event/demographic comparison across years.
-    This rule is deterministic: if the WHERE clause in each per-year SELECT mentions event or Sex, drop the race_2025 SELECT from the UNION. If WHERE is empty or only involves Date, keep race_2025.
+CROSS-YEAR COVERAGE:
+18. All years (race_2022 through race_2025) have complete data — include race_2025 in cross-year queries the same as any other year.
 
 DATE ARITHMETIC:
-20. "N days before the race" means CUMULATIVE registrations whose Date is strictly before (that race's Registration end date minus N days). It is a running total, not a single-day window. For race_2024 (end 2024-10-12), "3 days before the race" → WHERE date(Date) < date('2024-10-12','-3 days'). Use '<', not BETWEEN.
-21. When "days before the race" is asked across all years, apply rule 20 per year using each year's own Registration end date (from the info table / the values listed in "Race metadata" below) and emit one row per year per rule 9.
+19. "N days before the race" means CUMULATIVE registrations whose Date is on or before (that race's Registration end date minus N days) — INCLUSIVE. It is a running total, not a single-day window. For race_2024 (end 2024-10-12), "3 days before the race" → WHERE date(Date) <= date('2024-10-12','-3 days'). Use '<=', not '<' and not BETWEEN.
+20. When "days before the race" is asked across all years, apply rule 19 per year using each year's own Registration end date (from the info table / the values listed in "Race metadata" below) and emit one row per year per rule 9.
 
 RESPONSE FORMAT:
 Return ONLY the SQL query. No explanation, no markdown, no code fences. Just the raw SQL.
@@ -269,6 +263,64 @@ def execute_query(sql: str) -> pd.DataFrame:
         conn.close()
 
 
+# ---------------------------------------------------------------------------
+# Post-processing normalization layer.
+# Keeps SQL generation simple and lets us normalize user-facing text values
+# (e.g. "belmont ", "BELMONT", "Belmont" → "Belmont") without relying on the
+# LLM to write LOWER(TRIM(...)) correctly. Running after SQL execution also
+# means we can collapse case/whitespace duplicates in the result.
+# ---------------------------------------------------------------------------
+
+# Columns whose string values should be normalized for display, keyed by the
+# lowercased column name. The callable produces the canonical display form.
+NORMALIZERS = {
+    "city": lambda s: str(s).strip().title() if pd.notna(s) else s,
+}
+
+
+def _norm_col_name(col: str) -> str | None:
+    """Return a normalizer key if this column should be normalized, else None."""
+    return col.lower() if col.lower() in NORMALIZERS else None
+
+
+def _strip_limit(sql: str) -> tuple[str, int | None]:
+    """Remove a trailing LIMIT N from SQL so we can re-apply it after
+    normalization. Only strips a final top-level LIMIT, not ones inside
+    subqueries."""
+    match = re.search(r'\bLIMIT\s+(\d+)\s*;?\s*$', sql, re.IGNORECASE)
+    if not match:
+        return sql, None
+    return sql[:match.start()].rstrip().rstrip(';'), int(match.group(1))
+
+
+def normalize_result(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize known text columns (e.g. City) and collapse resulting
+    duplicates by summing integer columns. Re-sorts by the first numeric
+    column descending so top-N ordering is preserved."""
+    if df is None or df.empty:
+        return df
+
+    norm_cols = [c for c in df.columns if _norm_col_name(c) is not None]
+    if not norm_cols:
+        return df
+
+    df = df.copy()
+    for c in norm_cols:
+        df[c] = df[c].map(NORMALIZERS[_norm_col_name(c)])
+
+    other_cols = [c for c in df.columns if c not in norm_cols]
+    int_cols = [c for c in other_cols if pd.api.types.is_integer_dtype(df[c])]
+
+    # Only re-aggregate when every non-normalized column is an integer count.
+    # Mixed-type rows (e.g. averages, percentages) are left as-is to avoid
+    # silently summing things that should be averaged.
+    if other_cols and len(int_cols) == len(other_cols):
+        df = df.groupby(norm_cols, as_index=False, sort=False)[int_cols].sum()
+        df = df.sort_values(int_cols[0], ascending=False).reset_index(drop=True)
+
+    return df
+
+
 def ask(question: str, api_key: str, model: str = "gpt-4o-mini", provider: str = "openai") -> dict:
     """
     End-to-end: question in, structured result out.
@@ -301,8 +353,14 @@ def ask(question: str, api_key: str, model: str = "gpt-4o-mini", provider: str =
             "chart_hint": None,
         }
 
+    # If the SQL touches a column we normalize (e.g. City) and ends in LIMIT,
+    # strip the LIMIT so we can aggregate case/whitespace variants that would
+    # otherwise be cut off, then re-apply the LIMIT after normalization.
+    needs_norm = any(col in sql.lower() for col in NORMALIZERS.keys())
+    exec_sql, original_limit = (_strip_limit(sql) if needs_norm else (sql, None))
+
     try:
-        df = execute_query(sql)
+        df = execute_query(exec_sql)
     except Exception as e:
         return {
             "question": question,
@@ -311,6 +369,10 @@ def ask(question: str, api_key: str, model: str = "gpt-4o-mini", provider: str =
             "error": f"Query execution failed: {str(e)}",
             "chart_hint": None,
         }
+
+    df = normalize_result(df)
+    if original_limit is not None:
+        df = df.head(original_limit).reset_index(drop=True)
 
     # Determine chart type based on result shape
     chart_hint = infer_chart_type(df)

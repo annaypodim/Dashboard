@@ -19,7 +19,7 @@
     "id": 3,
     "question": "What are the top 5 cities for race_2024?",
     "expected_sql_pattern": "LIMIT 5",
-    "expected_result": {"rows": 5, "values_unordered": {"belmont": 573, "redwood city": 143, "san carlos": 117, "san mateo": 100, "foster city": 27}},
+    "expected_result": {"rows": 5, "values_unordered": {"Belmont": 573, "Redwood City": 143, "San Carlos": 117, "San Mateo": 100, "Foster City": 27}},
     "difficulty": "medium",
     "category": "ranking"
   },
@@ -35,7 +35,7 @@
     "id": 5,
     "question": "What are the total registrations for each year?",
     "expected_sql_pattern": "UNION ALL",
-    "expected_result": {"rows": 4, "values": [881, 994, 1162, 86]},
+    "expected_result": {"rows": 4, "values": [881, 994, 1162, 1165]},
     "difficulty": "hard",
     "category": "cross_table"
   },
@@ -59,7 +59,7 @@
     "id": 8,
     "question": "How many registrants were there 3 days before race_2024?",
     "expected_sql_pattern": "date|Date",
-    "expected_result": {"rows": 1, "value": 971},
+    "expected_result": {"rows": 1, "value": 1005},
     "difficulty": "hard",
     "category": "date_calc"
   },
@@ -91,7 +91,7 @@
     "id": 12,
     "question": "Which year had the most registrations?",
     "expected_sql_pattern": "UNION ALL|ORDER BY",
-    "expected_result": {"rows": 1, "first_value": "race_2024"},
+    "expected_result": {"rows": 1, "first_value": "race_2025"},
     "difficulty": "hard",
     "category": "cross_table"
   },
@@ -123,7 +123,7 @@
     "id": 16,
     "question": "How many female 10K runners were there each year?",
     "expected_sql_pattern": "UNION ALL",
-    "expected_result": {"rows": 3, "values_unordered": {"race_2022": 79, "race_2023": 78, "race_2024": 76}},
+    "expected_result": {"rows": 4, "values_unordered": {"race_2022": 79, "race_2023": 78, "race_2024": 76, "race_2025": 78}},
     "difficulty": "hard",
     "category": "cross_table_demographic"
   },
@@ -131,7 +131,7 @@
     "id": 17,
     "question": "What are the top 5 cities for male 5K registrants in race_2024?",
     "expected_sql_pattern": "Sex.*M.*5K|5K.*Sex.*M",
-    "expected_result": {"rows": 5, "values_unordered": {"belmont": 133, "redwood city": 32, "san mateo": 19, "san carlos": 15, "foster city": 6}},
+    "expected_result": {"rows": 5, "values_unordered": {"Belmont": 133, "Redwood City": 32, "San Mateo": 19, "San Carlos": 15, "Foster City": 6}},
     "difficulty": "hard",
     "category": "filtered_ranking"
   },
@@ -139,7 +139,7 @@
     "id": 18,
     "question": "How many registrations were there 7 days before the race across all years?",
     "expected_sql_pattern": "UNION ALL",
-    "expected_result": {"rows": 4, "values_unordered": {"race_2022": 658, "race_2023": 764, "race_2024": 835, "race_2025": 86}},
+    "expected_result": {"rows": 4, "values_unordered": {"race_2022": 672, "race_2023": 788, "race_2024": 864, "race_2025": 867}},
     "difficulty": "hard",
     "category": "cross_table_date_calc"
   },
@@ -147,7 +147,7 @@
     "id": 19,
     "question": "Show the sex breakdown for the Kids Fun Run across all years",
     "expected_sql_pattern": "UNION ALL",
-    "expected_result": {"rows_gte": 6, "row_tuples": [["race_2022", "F", 70], ["race_2022", "M", 84], ["race_2023", "F", 81], ["race_2023", "M", 91], ["race_2024", "F", 101], ["race_2024", "M", 125]]},
+    "expected_result": {"rows_gte": 6, "row_tuples": [["race_2022", "F", 70], ["race_2022", "M", 84], ["race_2023", "F", 81], ["race_2023", "M", 91], ["race_2024", "F", 101], ["race_2024", "M", 125], ["race_2025", "F", 124], ["race_2025", "M", 115]]},
     "difficulty": "hard",
     "category": "cross_table_demographic"
   },
@@ -155,7 +155,7 @@
     "id": 20,
     "question": "What is the average age of 5K runners for each year?",
     "expected_sql_pattern": "AVG.*Age|Age.*AVG",
-    "expected_result": {"rows": 3, "values_approx_unordered": {"race_2022": 36.7, "race_2023": 34.2, "race_2024": 33.7}, "tolerance": 1.0},
+    "expected_result": {"rows": 4, "values_approx_unordered": {"race_2022": 36.7, "race_2023": 34.2, "race_2024": 33.7, "race_2025": 33.6}, "tolerance": 1.0},
     "difficulty": "hard",
     "category": "cross_table_calculation"
   },
@@ -171,7 +171,7 @@
     "id": 22,
     "question": "How many people had registered 14 days before the race for each year?",
     "expected_sql_pattern": "UNION ALL",
-    "expected_result": {"rows": 4, "values_unordered": {"race_2022": 522, "race_2023": 665, "race_2024": 747, "race_2025": 86}},
+    "expected_result": {"rows": 4, "values_unordered": {"race_2022": 541, "race_2023": 682, "race_2024": 756, "race_2025": 707}},
     "difficulty": "hard",
     "category": "cross_table_date_calc"
   },
@@ -187,7 +187,7 @@
     "id": 24,
     "question": "Compare Fido Mile registrations across all years",
     "expected_sql_pattern": "Fido|fido|FIDO",
-    "expected_result": {"rows": 3, "values_unordered": {"race_2022": 122, "race_2023": 177, "race_2024": 138}},
+    "expected_result": {"rows": 4, "values_unordered": {"race_2022": 122, "race_2023": 177, "race_2024": 138, "race_2025": 130}},
     "difficulty": "hard",
     "category": "cross_table_filtered"
   },
