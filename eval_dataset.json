@@ -19,7 +19,7 @@
     "id": 3,
     "question": "What are the top 5 cities for race_2024?",
     "expected_sql_pattern": "LIMIT 5",
-    "expected_result": {"rows": 5, "first_value": "Belmont"},
+    "expected_result": {"rows": 5, "values_unordered": {"belmont": 573, "redwood city": 143, "san carlos": 117, "san mateo": 100, "foster city": 27}},
     "difficulty": "medium",
     "category": "ranking"
   },
@@ -27,7 +27,7 @@
     "id": 4,
     "question": "Show me registrations by event type for race_2024",
     "expected_sql_pattern": "GROUP BY.*event|event.*GROUP BY",
-    "expected_result": {"rows": 7},
+    "expected_result": {"rows": 7, "values_unordered": {"5K": 425, "1 Mile - Kid's Fun Run": 229, "10K": 213, "Parent Escort - 1 Mile Kids' Fun Run": 145, "1 Mile - Fido Mile": 92, "Additional Fido Escorts": 46, "Virtual Run or Walk": 12}},
     "difficulty": "easy",
     "category": "groupby"
   },
@@ -67,7 +67,7 @@
     "id": 9,
     "question": "What events were available in race_2022?",
     "expected_sql_pattern": "DISTINCT.*event|event.*DISTINCT",
-    "expected_result": {"rows": 8},
+    "expected_result": {"rows": 8, "contains": ["5K", "10K", "1 Mile - Fido Mile", "1 Mile - Kid's Fun Run", "Virtual Run or Walk", "Silverado Mile"]},
     "difficulty": "easy",
     "category": "distinct"
   },
@@ -107,7 +107,7 @@
     "id": 14,
     "question": "Show the registration count by sex for the 10K in race_2024",
     "expected_sql_pattern": "Sex.*10K|10K.*Sex",
-    "expected_result": {"rows_gte": 2},
+    "expected_result": {"rows_gte": 2, "values_unordered": {"F": 76, "M": 136}},
     "difficulty": "medium",
     "category": "filtered_groupby"
   },
@@ -115,7 +115,7 @@
     "id": 15,
     "question": "When did registration open and close for race_2023?",
     "expected_sql_pattern": "info.*race_2023|race_2023.*info",
-    "expected_result": {"rows": 1, "contains": ["2023-04-28", "2023-10-14"]},
+    "expected_result": {"rows": 1, "contains": ["2023-04-28", "2023-10-14", "race_2023"]},
     "difficulty": "medium",
     "category": "metadata"
   },
@@ -131,7 +131,7 @@
     "id": 17,
     "question": "What are the top 5 cities for male 5K registrants in race_2024?",
     "expected_sql_pattern": "Sex.*M.*5K|5K.*Sex.*M",
-    "expected_result": {"rows": 5, "first_value": "Belmont"},
+    "expected_result": {"rows": 5, "values_unordered": {"belmont": 133, "redwood city": 32, "san mateo": 19, "san carlos": 15, "foster city": 6}},
     "difficulty": "hard",
     "category": "filtered_ranking"
   },
@@ -147,7 +147,7 @@
     "id": 19,
     "question": "Show the sex breakdown for the Kids Fun Run across all years",
     "expected_sql_pattern": "UNION ALL",
-    "expected_result": {"rows_gte": 6},
+    "expected_result": {"rows_gte": 6, "row_tuples": [["race_2022", "F", 70], ["race_2022", "M", 84], ["race_2023", "F", 81], ["race_2023", "M", 91], ["race_2024", "F", 101], ["race_2024", "M", 125]]},
     "difficulty": "hard",
     "category": "cross_table_demographic"
   },
@@ -179,7 +179,7 @@
     "id": 23,
     "question": "What is the percentage of female registrants for each event in race_2024?",
     "expected_sql_pattern": "Sex.*F|F.*Sex",
-    "expected_result": {"rows": 7},
+    "expected_result": {"rows": 7, "values_approx_unordered": {"5K": 45.65, "10K": 35.68, "1 Mile - Fido Mile": 60.87, "1 Mile - Kid's Fun Run": 44.10, "Additional Fido Escorts": 52.17, "Parent Escort - 1 Mile Kids' Fun Run": 48.28, "Virtual Run or Walk": 50.0}, "tolerance": 1.0},
     "difficulty": "hard",
     "category": "demographic_calculation"
   },
@@ -195,7 +195,7 @@
     "id": 25,
     "question": "How did male 5K registrations change from 2022 to 2024?",
     "expected_sql_pattern": "Sex.*M.*5K|5K.*Sex.*M",
-    "expected_result": {"rows": 2},
+    "expected_result": {"rows": 2, "values_unordered": {"race_2022": 171, "race_2024": 228}},
     "difficulty": "hard",
     "category": "cross_table_demographic"
   }

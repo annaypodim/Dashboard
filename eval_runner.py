@@ -159,6 +159,40 @@ def check_result(expected, result):
                 if not ok:
                     passed = False
 
+    # check row tuples: each expected tuple must appear as a row (unordered)
+    # year aliases normalized on any string cell
+    if "row_tuples" in expected:
+        def _norm(v):
+            s = str(v).strip()
+            return _normalize_year_key(s)
+
+        actual_rows = [tuple(_norm(v) for v in row) for row in df.itertuples(index=False, name=None)]
+        for tup in expected["row_tuples"]:
+            target = tuple(_norm(v) for v in tup)
+            ok = False
+            for row in actual_rows:
+                if len(row) < len(target):
+                    continue
+                # match target against any contiguous alignment starting at 0
+                match = True
+                for i, want in enumerate(target):
+                    got = row[i]
+                    if want == got:
+                        continue
+                    try:
+                        if float(got) == float(want):
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+                    match = False
+                    break
+                if match:
+                    ok = True
+                    break
+            checks.append(f"row_tuple {tup}: {'FOUND' if ok else 'MISSING'}")
+            if not ok:
+                passed = False
+
     # check contains
     if "contains" in expected:
         flat = df.to_string()
