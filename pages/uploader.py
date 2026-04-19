@@ -36,9 +36,11 @@ for i in reversed(range(len(races))):
 
 
 def _parse_csv_dates(df: pd.DataFrame) -> pd.DataFrame:
-    """Parse dates in uploaded CSV using vectorized pandas parsing."""
+    """Parse dates in uploaded CSV. Strips trailing timezone abbreviation
+    (e.g. ' PST', ' PDT') since pandas no longer parses those."""
     df = df.rename(columns={"Sub-event": "event", "Date Registered": "Date"})
-    df['Date'] = pd.to_datetime(df['Date'])
+    cleaned = df['Date'].astype(str).str.replace(r'\s+[A-Z]{2,4}$', '', regex=True)
+    df['Date'] = pd.to_datetime(cleaned, format='%Y-%m-%d %H:%M:%S', errors='coerce')
     return df
 
 
@@ -69,10 +71,15 @@ submit = st.button("submit")
 
 
 if submit and uploaded:
-    st.write(f"CSV is reporting data for: {df['Date'].iloc[0].date()}")
-    string = info_df[info_df['Name'] == year_selector]['Registration end date'].iloc[0]
-    if today >= pd.Timestamp(df['Date'].iloc[0]).date() and today <= pd.Timestamp(string).date():
-        st.write("data within range of race")
+    st.write(f"CSV is reporting data from: {df['Date'].iloc[0].date()} to {df['Date'].iloc[-1].date()}")
+    race_row = info_df[info_df['Name'] == year_selector].iloc[0]
+    reg_start = pd.Timestamp(race_row['Registration start date']).date()
+    reg_end = pd.Timestamp(race_row['Registration end date']).date()
+    csv_first = pd.Timestamp(df['Date'].iloc[0]).date()
+    csv_last = pd.Timestamp(df['Date'].iloc[-1]).date()
+
+    if reg_start <= csv_first and csv_last <= reg_end:
+        st.write(f"CSV dates fall within {year_selector} registration window ({reg_start} to {reg_end})")
         if pd.Timestamp(df['Date'].iloc[-1]).date() >= pd.Timestamp(ogRace['Date'].iloc[-1]).date():
             st.write("Data is okay to be written and is being written")
 
@@ -90,9 +97,9 @@ if submit and uploaded:
                 conn.close()
 
         else:
-            st.error("This appears to be old data for this year and cannot be uploaded")
+            st.error("This appears to be an older snapshot than what's already in the DB and cannot be uploaded")
     else:
-        st.error("Uploaded data is invalid, please check the year of data you are uploading for is the current year")
+        st.error(f"CSV dates ({csv_first} to {csv_last}) do not fall within {year_selector}'s registration window ({reg_start} to {reg_end}). Check you selected the right race.")
 
 
 
