@@ -1,16 +1,16 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
 import plotly.graph_objects as go
 from datetime import datetime
 from class_init import *
+from class_init import _validate_table_name
 
 # authenticate user check
 if not authenticate_user():
     st.stop()
 
-# connect to sqlite database
-conn = sqlite3.connect('races.db')
+# connect to the Postgres database
+conn = connect_db()
 
 # load race info from dashboard
 info = Information()
@@ -170,7 +170,7 @@ st.write(f"Currently viewing financial data for: **{race_selector}**")
 
 # ── load registrant data ──────────────────────────────────────────────────────
 try:
-    df = pd.read_sql(f"SELECT * FROM {race_selector}", conn)
+    df = pd.read_sql(f'SELECT * FROM "{_validate_table_name(race_selector)}"', conn)
 except Exception as e:
     st.error(f"Error loading data for {race_selector}: {e}")
     st.stop()
@@ -237,7 +237,7 @@ if len(available) > 1:
     for yr in sorted(available):
         f = FINANCE_DATA[yr]
         try:
-            yr_regs = len(pd.read_sql(f"SELECT * FROM {yr}", conn))
+            yr_regs = len(pd.read_sql(f'SELECT * FROM "{_validate_table_name(yr)}"', conn))
         except Exception:
             yr_regs = None
 

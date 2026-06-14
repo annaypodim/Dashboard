@@ -73,7 +73,12 @@ if submit and uploaded:
     string = info_df[info_df['Name'] == year_selector]['Registration end date'].iloc[0]
     if today >= pd.Timestamp(df['Date'].iloc[0]).date() and today <= pd.Timestamp(string).date():
         st.write("data within range of race")
-        if pd.Timestamp(df['Date'].iloc[-1]).date() >= pd.Timestamp(ogRace['Date'].iloc[-1]).date():
+        # Compare the newest date in each set explicitly. Postgres does not
+        # guarantee row order without ORDER BY, so positional indexing (iloc[-1])
+        # is not a reliable way to find the latest registration.
+        uploaded_latest = pd.to_datetime(df['Date']).max()
+        existing_latest = pd.to_datetime(ogRace['Date']).max()
+        if uploaded_latest.date() >= existing_latest.date():
             st.write("Data is okay to be written and is being written")
 
             # year_selector comes from radio buttons populated by existing race names,

@@ -1,8 +1,8 @@
 """
 Natural Language Query Engine for Race Dashboard
 =================================================
-Translates natural language questions into SQL queries against the races.db
-SQLite database, executes them safely, and returns structured results.
+Translates natural language questions into SQL queries against the Postgres
+race database, executes them safely, and returns structured results.
 
 Architecture: "Text-to-SQL" pattern
 - User asks a question in plain English
@@ -17,7 +17,6 @@ Why this approach?
 - No vector DB, no embeddings, no RAG pipeline — minimal dependencies
 """
 
-import sqlite3
 import re
 import pandas as pd
 from datetime import datetime
@@ -32,69 +31,78 @@ from class_init import connect_db, _validate_table_name
 
 def get_db_schema() -> str:
     """
-    Reads the SQLite database and returns a human-readable schema description
+    Reads the Postgres database and returns a human-readable schema description
     that we'll include in the LLM prompt. This is the 'context injection' step —
     giving the model the information it needs to write correct SQL.
     """
     conn = connect_db()
-    cursor = conn.cursor()
+    try:
+        # Get all user table names from information_schema (Postgres metadata).
+        tables = pd.read_sql(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = 'public' ORDER BY table_name",
+            conn,
+        )["table_name"].tolist()
 
-    # Get all table names
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-    tables = [row[0] for row in cursor.fetchall()]
+        schema_parts = []
 
-    schema_parts = []
-
-    for table in tables:
-        # Validate table name before using in queries
-        try:
-            safe_table = _validate_table_name(table)
-        except ValueError:
-            continue  # Skip tables with unusual names
-
-        # Get column info using PRAGMA — SQLite's metadata command
-        cursor.execute(f"PRAGMA table_info([{safe_table}])")
-        columns = cursor.fetchall()
-        col_descriptions = []
-        for col in columns:
-            # PRAGMA table_info returns: (cid, name, type, notnull, default, pk)
-            col_descriptions.append(f"    {col[1]} ({col[2] or 'TEXT'})")
-
-        # Get row count for context
-        cursor.execute(f"SELECT COUNT(*) FROM [{safe_table}]")
-        count = cursor.fetchone()[0]
-
-        # Get sample values for key columns to help the LLM understand data format
-        sample_info = ""
-        if table != "info":
+        for table in tables:
+            # Validate table name before using it in queries.
             try:
-                cursor.execute(f"SELECT DISTINCT event FROM [{safe_table}] LIMIT 10")
-                events = [row[0] for row in cursor.fetchall()]
-                sample_info = f"\n  Sample event values: {events}"
-            except Exception:
-                pass
-            try:
-                cursor.execute(f"SELECT Date FROM [{safe_table}] LIMIT 1")
-                date_sample = cursor.fetchone()
-                if date_sample:
-                    sample_info += f"\n  Date format example: {date_sample[0]}"
-            except Exception:
-                pass
+                safe_table = _validate_table_name(table)
+            except ValueError:
+                continue  # Skip tables with unusual names
 
-        schema_parts.append(
-            f"Table: {table} ({count} rows)\n"
-            f"  Columns:\n" + "\n".join(col_descriptions) + sample_info
-        )
+            # Get column info from information_schema. safe_table is already
+            # validated (alphanumeric/underscore only), so inlining it is safe.
+            cols = pd.read_sql(
+                "SELECT column_name, data_type FROM information_schema.columns "
+                f"WHERE table_schema = 'public' AND table_name = '{safe_table}' "
+                "ORDER BY ordinal_position",
+                conn,
+            )
+            col_descriptions = [
+                f"    {row.column_name} ({row.data_type})"
+                for row in cols.itertuples(index=False)
+            ]
 
-    # Also get the info table contents — this is critical context because it maps
-    # race names to date ranges, which the LLM needs to answer time-based questions
-    cursor.execute("SELECT * FROM info")
-    info_rows = cursor.fetchall()
-    info_context = "\n\nRace metadata (from 'info' table):\n"
-    for row in info_rows:
-        info_context += f"  {row[0]}: registration {row[1]} to {row[2]}\n"
+            # Get row count for context.
+            count = pd.read_sql(
+                f'SELECT COUNT(*) AS n FROM "{safe_table}"', conn
+            )["n"].iloc[0]
 
-    conn.close()
+            # Get sample values for key columns to help the LLM understand data format.
+            sample_info = ""
+            if table != "info":
+                try:
+                    events = pd.read_sql(
+                        f'SELECT DISTINCT event FROM "{safe_table}" LIMIT 10', conn
+                    )["event"].tolist()
+                    sample_info = f"\n  Sample event values: {events}"
+                except Exception:
+                    pass
+                try:
+                    date_sample = pd.read_sql(
+                        f'SELECT "Date" FROM "{safe_table}" LIMIT 1', conn
+                    )
+                    if not date_sample.empty:
+                        sample_info += f"\n  Date format example: {date_sample['Date'].iloc[0]}"
+                except Exception:
+                    pass
+
+            schema_parts.append(
+                f"Table: {table} ({count} rows)\n"
+                f"  Columns:\n" + "\n".join(col_descriptions) + sample_info
+            )
+
+        # Also get the info table contents — this is critical context because it maps
+        # race names to date ranges, which the LLM needs to answer time-based questions.
+        info_rows = pd.read_sql("SELECT * FROM info", conn)
+        info_context = "\n\nRace metadata (from 'info' table):\n"
+        for row in info_rows.itertuples(index=False):
+            info_context += f"  {row[0]}: registration {row[1]} to {row[2]}\n"
+    finally:
+        conn.close()
 
     return "\n\n".join(schema_parts) + info_context
 
@@ -105,21 +113,22 @@ def get_db_schema() -> str:
 # ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT = """You are a SQL query generator for a race registration database.
-You translate natural language questions into SQLite SELECT queries.
+You translate natural language questions into PostgreSQL SELECT queries.
 
 RULES:
 1. ONLY generate SELECT statements. Never INSERT, UPDATE, DELETE, DROP, ALTER, or any DDL.
-2. Always return valid SQLite syntax.
-3. When comparing dates, the Date column is stored as 'YYYY-MM-DD HH:MM:SS' text format. Use date() or substr() for comparisons.
-4. Each race table (race_2022, race_2023, etc.) has the same schema with columns: index, Participant ID, Date, Sex, City, State, ZIP/Postal Code, Country, event, Age.
-5. The 'info' table maps race names to registration date ranges.
-6. When users ask about "days before the race", calculate from the Registration end date in the info table. For example, "3 days before the race" for race_2024 (end date 2024-10-12) means date('2024-10-12', '-3 days').
-7. When users ask "across all years" or "for each year", write a UNION ALL query combining all race tables, adding a 'race_year' column. IMPORTANT: Never use SELECT * in UNION ALL queries — always list specific columns explicitly (e.g. "Participant ID", Date, Sex, City, State, "ZIP/Postal Code", Country, event, Age) because tables may have different numbers of columns.
-8. For counts, use COUNT(*). For unique participants, use COUNT(DISTINCT "Participant ID").
-9. Always alias calculated columns with readable names.
-10. If the question is ambiguous, make a reasonable assumption and proceed.
-11. The 'event' column contains sub-event names like '5K', '10K', '1 Mile - Fido Mile', etc.
-12. "registrants" means rows in a race table. Each row = one registration.
+2. Always return valid PostgreSQL syntax.
+3. Identifiers are CASE-SENSITIVE in this database. Table names (e.g. "race_2024") and any column whose name has uppercase letters or spaces MUST be wrapped in double quotes: "Participant ID", "Date", "Sex", "City", "State", "ZIP/Postal Code", "Country", "Age". The 'event' column is lowercase and may be left unquoted.
+4. The Date column is a real timestamp. Compare it directly to date literals, e.g. "Date" < DATE '2024-10-09', or use "Date"::date. Do not use SQLite functions like date() or substr() on it.
+5. Each race table (race_2022, race_2023, etc.) has the same schema with columns: "Participant ID", "Date", "Sex", "City", "State", "ZIP/Postal Code", "Country", event, "Age".
+6. The 'info' table maps race names to registration date ranges (columns: "Name", "Registration start date", "Registration end date").
+7. When users ask about "days before the race", calculate from the Registration end date in the info table. For example, "3 days before the race" for race_2024 (end date 2024-10-12) means DATE '2024-10-12' - INTERVAL '3 days'.
+8. When users ask "across all years" or "for each year", write a UNION ALL query combining all race tables, adding a 'race_year' column. IMPORTANT: Never use SELECT * in UNION ALL queries — always list specific columns explicitly (e.g. "Participant ID", "Date", "Sex", "City", "State", "ZIP/Postal Code", "Country", event, "Age").
+9. For counts, use COUNT(*). For unique participants, use COUNT(DISTINCT "Participant ID").
+10. Always alias calculated columns with readable names.
+11. If the question is ambiguous, make a reasonable assumption and proceed.
+12. The 'event' column contains sub-event names like '5K', '10K', '1 Mile - Fido Mile', etc.
+13. "registrants" means rows in a race table. Each row = one registration.
 
 RESPONSE FORMAT:
 Return ONLY the SQL query. No explanation, no markdown, no code fences. Just the raw SQL.

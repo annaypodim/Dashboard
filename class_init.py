@@ -2,9 +2,9 @@ import pandas as pd
 from datetime import datetime, timedelta, date
 import plotly.express as px
 import streamlit as st
-import sqlite3
 import re
 from dotenv import load_dotenv
+from sqlalchemy import create_engine
 import os
 
 
@@ -21,14 +21,38 @@ def _validate_table_name(name: str) -> str:
     return name
 
 
+# Module-level cached engine. The module is imported once per process, so this
+# is shared across Streamlit reruns within a session instead of opening a brand
+# new connection pool on every page interaction.
+_engine = None
+
+
+def get_engine():
+    """Return a cached SQLAlchemy engine for the Postgres database.
+
+    The connection string comes from the DATABASE_URL environment variable
+    (set in .env locally, or as a secret in the deployment environment), e.g.
+    postgresql://user:pass@host/dbname?sslmode=require
+    """
+    global _engine
+    if _engine is None:
+        load_credentials()
+        url = os.getenv("DATABASE_URL")
+        if not url:
+            raise RuntimeError("DATABASE_URL not set -- cannot connect to the database")
+        # pool_pre_ping recycles connections dropped by serverless Postgres (e.g.
+        # Neon scaling to zero) instead of handing out a dead connection.
+        _engine = create_engine(url, pool_pre_ping=True)
+    return _engine
+
+
 def connect_db():
-    """Connect to the SQLite database, checking both possible locations."""
-    if os.path.exists("../races.db"):
-        return sqlite3.connect("../races.db")
-    elif os.path.exists("races.db"):
-        return sqlite3.connect("races.db")
-    else:
-        raise FileNotFoundError("races.db not found in current or parent directory")
+    """Open a new connection to the Postgres database.
+
+    Returns a SQLAlchemy Connection, which works with pandas read_sql/to_sql and
+    supports .commit()/.close() just like the old sqlite3 connection did.
+    """
+    return get_engine().connect()
 
 
 def check_requirements_installed():
@@ -36,8 +60,9 @@ def check_requirements_installed():
         st.error(".env file not found -- for this website to work, it must be copied over -- stopping website")
         st.stop()
 
-    if not os.path.exists("races.db") and not os.path.exists("../races.db"):
-        st.error("races.db file not found -- stopping website (required for website to function)")
+    load_credentials()
+    if not os.getenv("DATABASE_URL"):
+        st.error("DATABASE_URL not configured -- stopping website (required to connect to the database)")
         st.stop()
 
 
@@ -92,7 +117,7 @@ class Information:
         safe_name = _validate_table_name(race_name)
         conn = connect_db()
         try:
-            d = pd.read_sql(f"SELECT * FROM [{safe_name}]", conn)
+            d = pd.read_sql(f'SELECT * FROM "{safe_name}"', conn)
         finally:
             conn.close()
         return d
@@ -108,7 +133,7 @@ class Race:
         self.race_name = _validate_table_name(race_name)
         conn = connect_db()
         try:
-            self.dataframe = pd.read_sql(f"SELECT * FROM [{self.race_name}]", conn)
+            self.dataframe = pd.read_sql(f'SELECT * FROM "{self.race_name}"', conn)
         finally:
             conn.close()
         # Convert date strings to date objects using vectorized pandas parsing
