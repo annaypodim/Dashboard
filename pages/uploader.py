@@ -3,7 +3,9 @@ import pandas as pd
 from datetime import datetime, date
 from class_init import (
     check_requirements_installed, authenticate_user, Information,
-    get_races, connect_db, _validate_table_name, TABLE_NAME_PATTERN
+    get_races, connect_db, _validate_table_name, TABLE_NAME_PATTERN,
+    load_all_finance, save_finance,
+    FINANCE_INCOME_COLS, FINANCE_FIXED_COLS, FINANCE_VARIABLE_COLS, FINANCE_TOTAL_COLS,
 )
 
 check_requirements_installed()
@@ -165,3 +167,60 @@ if create_new_race:
             st.error(f"Database write failed: {e}")
         finally:
             conn.close()
+
+
+st.write("------------------------------------------------------")
+st.write("### Finance data")
+st.write(
+    "Enter or update financial line items for a race. Derived totals "
+    "(fixed/variable/income-less-sponsorship) are computed automatically on the "
+    "Finance Tool page, so only enter the raw line items below."
+)
+
+# refresh races so a newly-created race above is selectable here
+finance_races = get_races()
+
+if not finance_races:
+    st.info("Create a race first before adding finance data.")
+else:
+    fin_race = st.selectbox(
+        "Select race to edit finance data for",
+        [r.race_name for r in reversed(finance_races)],
+        key="finance_race_selector",
+    )
+
+    existing_fin = load_all_finance().get(fin_race, {})
+
+    with st.form("finance_form"):
+        st.write(f"Editing finance data for **{fin_race}**")
+
+        # Single prominent submit button at the top so it's clear when the form
+        # saves without scrolling to the bottom of the line-item list.
+        save_finance_clicked = st.form_submit_button("Save finance data", type="primary")
+
+        finance_inputs = {}
+
+        # number_input per line item, grouped and prefilled with any existing value
+        for header, cols in [
+            ("Income", FINANCE_INCOME_COLS),
+            ("Fixed expenses", FINANCE_FIXED_COLS),
+            ("Variable expenses", FINANCE_VARIABLE_COLS),
+            ("Totals", FINANCE_TOTAL_COLS),
+        ]:
+            st.markdown(f"**{header}**")
+            for cat in cols:
+                finance_inputs[cat] = st.number_input(
+                    cat,
+                    value=float(existing_fin.get(cat, 0.0)),
+                    step=100.0,
+                    # race-specific key so switching the selector loads each
+                    # race's own stored values instead of reusing widget state
+                    key=f"finance_input_{fin_race}_{cat}",
+                )
+
+    if save_finance_clicked:
+        try:
+            save_finance(fin_race, finance_inputs)
+            st.success(f"Finance data saved for {fin_race}")
+        except Exception as e:
+            st.error(f"Failed to save finance data: {e}")

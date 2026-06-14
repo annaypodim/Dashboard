@@ -4,7 +4,7 @@ import plotly.express as px
 import streamlit as st
 import re
 from dotenv import load_dotenv
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 import os
 
 
@@ -186,4 +186,96 @@ def get_races() -> list:
         name = info_df['Name'].iloc[i]
         races.append(Race(start_date, end_date, name))
     return races
+
+
+# ---------------------------------------------------------------------------
+# Finance data — stored remotely in the 'finance' table (wide format: one row
+# per race, one column per line item). These constants are the single source of
+# truth for which line items exist and how they group, shared by the finance
+# tool (which displays them) and the uploader (which edits them).
+#
+# Only RAW line items are stored. Derived totals (Total income less sponsorship,
+# Total Fixed expense, Total Variable expense) are computed in code so they can
+# never drift out of sync with the line items.
+# ---------------------------------------------------------------------------
+
+FINANCE_INCOME_COLS = ["Race income", "Sponsorship", "Donations", "Total income"]
+FINANCE_FIXED_COLS = [
+    "BTB (Cost / Consulting)", "BTB (Rentals)", "EMS", "Timing services",
+    "Portable", "Facebook/Signs", "RRCA (insurance)", "Other", "Photography",
+]
+FINANCE_VARIABLE_COLS = ["Shirts", "Medals", "Bandana", "EMEDIA (Bibs)"]
+FINANCE_TOTAL_COLS = ["Total expense", "Net (all in)", "Net (w/o Sponsorship)"]
+
+# Canonical ordered list of every raw category persisted to the finance table.
+FINANCE_CATEGORIES = (
+    FINANCE_INCOME_COLS + FINANCE_FIXED_COLS + FINANCE_VARIABLE_COLS + FINANCE_TOTAL_COLS
+)
+
+
+def ensure_finance_table():
+    """Create the finance table (one row per race, one column per line item) if
+    it does not already exist."""
+    # Category names come from the trusted FINANCE_CATEGORIES constant, so it is
+    # safe to interpolate them as quoted column identifiers.
+    col_defs = ", ".join(f'"{c}" DOUBLE PRECISION' for c in FINANCE_CATEGORIES)
+    conn = connect_db()
+    try:
+        conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS finance ("
+            f"race_name TEXT PRIMARY KEY, {col_defs})"
+        ))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def load_all_finance() -> dict:
+    """Return all finance data as {race_name: {category: amount}}.
+
+    Returns an empty dict if the finance table holds no rows yet.
+    """
+    ensure_finance_table()
+    conn = connect_db()
+    try:
+        df = pd.read_sql("SELECT * FROM finance", conn)
+    finally:
+        conn.close()
+    data: dict = {}
+    # to_dict preserves the exact column names (which contain spaces / symbols),
+    # unlike itertuples which would mangle them into positional identifiers.
+    for rec in df.to_dict(orient="records"):
+        race = rec.pop("race_name")
+        data[race] = {k: v for k, v in rec.items() if pd.notna(v)}
+    return data
+
+
+def save_finance(race_name: str, values: dict) -> None:
+    """Upsert one race's finance row. `values` maps category -> amount."""
+    safe_name = _validate_table_name(race_name)
+    # Only persist known categories; this also keeps the interpolated column
+    # identifiers below restricted to a trusted allowlist.
+    cols = [c for c in values if c in FINANCE_CATEGORIES]
+    if not cols:
+        return
+
+    ensure_finance_table()
+    col_idents = ", ".join(f'"{c}"' for c in cols)
+    placeholders = ", ".join(f":v{i}" for i in range(len(cols)))
+    updates = ", ".join(f'"{c}" = EXCLUDED."{c}"' for c in cols)
+    sql = (
+        f"INSERT INTO finance (race_name, {col_idents}) "
+        f"VALUES (:race, {placeholders}) "
+        f"ON CONFLICT (race_name) DO UPDATE SET {updates}"
+    )
+    params = {"race": safe_name}
+    for i, c in enumerate(cols):
+        params[f"v{i}"] = float(values[c])
+
+    conn = connect_db()
+    try:
+        conn.execute(text(sql), params)
+        conn.commit()
+    finally:
+        conn.close()
 
