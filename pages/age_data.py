@@ -33,7 +33,7 @@ st.write(f'Currently viewing age data for: **{race_selector}**')
 conn = connect_db()
 try:
     safe_name = _validate_table_name(race_selector)
-    df = pd.read_sql(f'SELECT * FROM [{safe_name}]', conn)
+    df = pd.read_sql(f'SELECT * FROM "{safe_name}"', conn)
 except Exception as e:
     st.error(f'Error loading data for {race_selector}: {e}')
     st.stop()

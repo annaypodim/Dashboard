@@ -32,7 +32,7 @@ for race in races:
     conn = connect_db()
     try:
         safe_name = _validate_table_name(race.race_name)
-        df = pd.read_sql(f'SELECT * FROM [{safe_name}]', conn)
+        df = pd.read_sql(f'SELECT * FROM "{safe_name}"', conn)
     except Exception as e:
         st.warning(f'Could not load data for {race.race_name}: {e}')
         continue

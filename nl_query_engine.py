@@ -1,8 +1,8 @@
 """
 Natural Language Query Engine for Race Dashboard
 =================================================
-Translates natural language questions into SQL queries against the races.db
-SQLite database, executes them safely, and returns structured results.
+Translates natural language questions into SQL queries against the Postgres
+race database, executes them safely, and returns structured results.
 
 Architecture: "Text-to-SQL" pattern
 - User asks a question in plain English
@@ -11,13 +11,12 @@ Architecture: "Text-to-SQL" pattern
 - Results are returned as a pandas DataFrame for visualization
 
 Why this approach?
-- The data is already in SQLite — no need to build a separate index
+- The data is already in Postgres — no need to build a separate index
 - SQL is deterministic and auditable — users can see exactly what query ran
 - The LLM only needs to know the schema, not the data itself
 - No vector DB, no embeddings, no RAG pipeline — minimal dependencies
 """
 
-import sqlite3
 import re
 import pandas as pd
 from datetime import datetime
@@ -32,77 +31,78 @@ from class_init import connect_db, _validate_table_name
 
 def get_db_schema() -> str:
     """
-    Reads the SQLite database and returns a human-readable schema description
+    Reads the Postgres database and returns a human-readable schema description
     that we'll include in the LLM prompt. This is the 'context injection' step —
     giving the model the information it needs to write correct SQL.
     """
     conn = connect_db()
-    cursor = conn.cursor()
+    try:
+        # Get all user table names from information_schema (Postgres metadata).
+        tables = pd.read_sql(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = 'public' ORDER BY table_name",
+            conn,
+        )["table_name"].tolist()
 
-    # Get all table names
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-    tables = [row[0] for row in cursor.fetchall()]
+        schema_parts = []
 
-    schema_parts = []
-
-    for table in tables:
-        # Validate table name before using in queries
-        try:
-            safe_table = _validate_table_name(table)
-        except ValueError:
-            continue  # Skip tables with unusual names
-
-        # Get column info using PRAGMA — SQLite's metadata command
-        cursor.execute(f"PRAGMA table_info([{safe_table}])")
-        columns = cursor.fetchall()
-        col_descriptions = []
-        for col in columns:
-            # PRAGMA table_info returns: (cid, name, type, notnull, default, pk)
-            col_descriptions.append(f"    {col[1]} ({col[2] or 'TEXT'})")
-
-        # Get row count for context
-        cursor.execute(f"SELECT COUNT(*) FROM [{safe_table}]")
-        count = cursor.fetchone()[0]
-
-        # Get sample values for key columns to help the LLM understand data format
-        sample_info = ""
-        if table != "info":
+        for table in tables:
+            # Validate table name before using it in queries.
             try:
-                cursor.execute(f"SELECT event, COUNT(*) FROM [{safe_table}] GROUP BY event ORDER BY event")
-                evt_rows = cursor.fetchall()
-                sample_info = "\n  Event counts in this table: " + ", ".join(
-                    f"{e!r}={n}" for e, n in evt_rows
-                )
-            except Exception:
-                pass
-            try:
-                cursor.execute(f"SELECT DISTINCT Sex FROM [{safe_table}]")
-                sexes = sorted([row[0] for row in cursor.fetchall()])
-                sample_info += f"\n  Sex values present: {sexes} (M=Male, F=Female, N=Non-binary, U=Unknown)"
-            except Exception:
-                pass
-            try:
-                cursor.execute(f"SELECT Date FROM [{safe_table}] LIMIT 1")
-                date_sample = cursor.fetchone()
-                if date_sample:
-                    sample_info += f"\n  Date format example: {date_sample[0]}"
-            except Exception:
-                pass
+                safe_table = _validate_table_name(table)
+            except ValueError:
+                continue  # Skip tables with unusual names
 
-        schema_parts.append(
-            f"Table: {table} ({count} rows)\n"
-            f"  Columns:\n" + "\n".join(col_descriptions) + sample_info
-        )
+            # Get column info from information_schema. safe_table is already
+            # validated (alphanumeric/underscore only), so inlining it is safe.
+            cols = pd.read_sql(
+                "SELECT column_name, data_type FROM information_schema.columns "
+                f"WHERE table_schema = 'public' AND table_name = '{safe_table}' "
+                "ORDER BY ordinal_position",
+                conn,
+            )
+            col_descriptions = [
+                f"    {row.column_name} ({row.data_type})"
+                for row in cols.itertuples(index=False)
+            ]
 
-    # Also get the info table contents — this is critical context because it maps
-    # race names to date ranges, which the LLM needs to answer time-based questions
-    cursor.execute("SELECT * FROM info")
-    info_rows = cursor.fetchall()
-    info_context = "\n\nRace metadata (from 'info' table):\n"
-    for row in info_rows:
-        info_context += f"  {row[0]}: registration {row[1]} to {row[2]}\n"
+            # Get row count for context.
+            count = pd.read_sql(
+                f'SELECT COUNT(*) AS n FROM "{safe_table}"', conn
+            )["n"].iloc[0]
 
-    conn.close()
+            # Get sample values for key columns to help the LLM understand data format.
+            sample_info = ""
+            if table != "info":
+                try:
+                    events = pd.read_sql(
+                        f'SELECT DISTINCT event FROM "{safe_table}" LIMIT 10', conn
+                    )["event"].tolist()
+                    sample_info = f"\n  Sample event values: {events}"
+                except Exception:
+                    pass
+                try:
+                    date_sample = pd.read_sql(
+                        f'SELECT "Date" FROM "{safe_table}" LIMIT 1', conn
+                    )
+                    if not date_sample.empty:
+                        sample_info += f"\n  Date format example: {date_sample['Date'].iloc[0]}"
+                except Exception:
+                    pass
+
+            schema_parts.append(
+                f"Table: {table} ({count} rows)\n"
+                f"  Columns:\n" + "\n".join(col_descriptions) + sample_info
+            )
+
+        # Also get the info table contents — this is critical context because it maps
+        # race names to date ranges, which the LLM needs to answer time-based questions.
+        info_rows = pd.read_sql("SELECT * FROM info", conn)
+        info_context = "\n\nRace metadata (from 'info' table):\n"
+        for row in info_rows.itertuples(index=False):
+            info_context += f"  {row[0]}: registration {row[1]} to {row[2]}\n"
+    finally:
+        conn.close()
 
     return "\n\n".join(schema_parts) + info_context
 
@@ -113,45 +113,47 @@ def get_db_schema() -> str:
 # ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT = """You are a SQL query generator for a race registration database.
-You translate natural language questions into SQLite SELECT queries.
+You translate natural language questions into PostgreSQL SELECT queries.
 
-SAFETY:
+POSTGRESQL SYNTAX (the database is PostgreSQL — these are mandatory):
 1. ONLY generate SELECT statements. Never INSERT, UPDATE, DELETE, DROP, ALTER, or any DDL. Single statement only.
+2. Identifiers are CASE-SENSITIVE. Every column whose name has uppercase letters, spaces, or slashes MUST be wrapped in double quotes: "Participant ID", "Date", "Sex", "City", "State", "ZIP/Postal Code", "Country", "Age". The 'event' column is lowercase and may be left unquoted.
+3. The "Date" column is a real timestamp — compare it directly to date literals, e.g. "Date" < DATE '2024-10-09', or cast with "Date"::date. NEVER use SQLite functions like date() or substr() on it.
+4. For case-insensitive text matching use ILIKE (never LIKE ... COLLATE NOCASE). String literals use single quotes; escape an apostrophe by doubling it ('Kid''s'). Never use double quotes for string values — double quotes mean an identifier.
 
 SCHEMA CONVENTIONS:
-2. Each race table (race_2022..race_2025) has the same columns: "index", "Participant ID", Date, Sex, City, State, "ZIP/Postal Code", Country, event, Age. Quote column names containing spaces or slashes.
-3. The 'info' table maps race names ('race_2022', 'race_2023', ...) to "Registration start date" and "Registration end date". When answering questions about registration dates / windows, ALWAYS include the Name column in the SELECT so the user can see which race the dates belong to.
-4. Dates are text in 'YYYY-MM-DD HH:MM:SS' format. Use date() or substr(Date,1,10) when comparing.
-5. Sex values are 'M' (male), 'F' (female), 'N' (non-binary), 'U' (unknown).
-6. "registrants" = rows in a race table.
+5. Each race table (race_2022..race_2025) has the same columns: "index", "Participant ID", "Date", "Sex", "City", "State", "ZIP/Postal Code", "Country", event, "Age".
+6. The 'info' table maps race names ('race_2022', 'race_2023', ...) to "Registration start date" and "Registration end date" (column "Name"). When answering questions about registration dates / windows, ALWAYS include the "Name" column in the SELECT so the user can see which race the dates belong to.
+7. "Sex" values are 'M' (male), 'F' (female), 'N' (non-binary), 'U' (unknown).
+8. "registrants" = rows in a race table. Each row = one registration.
 
 SINGLE-YEAR vs CROSS-YEAR — IMPORTANT:
-7. If the question names ONE specific year/table (e.g. "race_2024", "in 2023", "for race_2022", "in race_2025"), query ONLY that table. The output columns must be EXACTLY the requested metric(s) — do NOT add a race_year / year label column. For example, "How many male vs female in race_2023?" → `SELECT Sex, COUNT(*) FROM race_2023 WHERE Sex IN ('M','F') GROUP BY Sex` (NOT `SELECT 'race_2023' AS race_year, Sex, COUNT(*) ...`). And "Which event had the most registrations in race_2023?" → `SELECT event, COUNT(*) FROM race_2023 GROUP BY event ORDER BY COUNT(*) DESC LIMIT 1` (NOT with a race_year column). The year is already known from the table name — don't duplicate it.
-8. If the question mentions multiple years, "each year", "across all years", "by year", "per year", "compare X and Y" across years, or "how did X change" — produce ONE ROW PER YEAR using UNION ALL of per-year SELECTs.
-9. In cross-year output, the FIRST column MUST be the year label as 'race_YYYY' (e.g. 'race_2022'), aliased AS race_year. The metric columns come AFTER. Never put the metric before the year column.
-10. "from YEAR_A to YEAR_B" phrased as a change or comparison ("change from A to B", "compare between A and B", "how did X change from A to B") means ONLY the two endpoint years (exactly 2 rows, one UNION ALL per endpoint). Do NOT include years in between. For example, "between 2022 and 2024" in a comparison context means year 2022 and year 2024 only — never include 2023.
-11. Rule 8 applies to "each year" only — NOT to "each event", "each city", etc. "Each event" means GROUP BY event within one table, not UNION ALL. Apply the per-year UNION pattern solely when the grouping dimension is year/table.
+9. If the question names ONE specific year/table (e.g. "race_2024", "in 2023", "for race_2022", "in race_2025"), query ONLY that table. The output columns must be EXACTLY the requested metric(s) — do NOT add a race_year / year label column. For example, "How many male vs female in race_2023?" → `SELECT "Sex", COUNT(*) FROM race_2023 WHERE "Sex" IN ('M','F') GROUP BY "Sex"` (NOT `SELECT 'race_2023' AS race_year, "Sex", COUNT(*) ...`). And "Which event had the most registrations in race_2023?" → `SELECT event, COUNT(*) FROM race_2023 GROUP BY event ORDER BY COUNT(*) DESC LIMIT 1` (NOT with a race_year column). The year is already known from the table name — don't duplicate it.
+10. If the question mentions multiple years, "each year", "across all years", "by year", "per year", "compare X and Y" across years, or "how did X change" — produce ONE ROW PER YEAR using UNION ALL of per-year SELECTs. Never use SELECT * in UNION ALL queries — list specific columns explicitly.
+11. In cross-year output, the FIRST column MUST be the year label as 'race_YYYY' (e.g. 'race_2022'), aliased AS race_year. The metric columns come AFTER. Never put the metric before the year column.
+12. "from YEAR_A to YEAR_B" phrased as a change or comparison ("change from A to B", "compare between A and B", "how did X change from A to B") means ONLY the two endpoint years (exactly 2 rows, one UNION ALL per endpoint). Do NOT include years in between. For example, "between 2022 and 2024" in a comparison context means year 2022 and year 2024 only — never include 2023.
+13. Rule 10 applies to "each year" only — NOT to "each event", "each city", etc. "Each event" means GROUP BY event within one table, not UNION ALL. Apply the per-year UNION pattern solely when the grouping dimension is year/table.
 
 DEMOGRAPHIC / GROUPING QUERIES:
-12. "male vs female" / "male and female" / "by sex" / "sex breakdown" — return ONE ROW PER SEX using GROUP BY Sex. Restrict to Sex IN ('M','F') when the phrasing is a male-vs-female comparison; otherwise include all sexes present. Do NOT use CASE WHEN columns to produce a single row — always use GROUP BY rows.
-13. "sex breakdown across all years" or "by sex for each year" — produce ONE ROW PER (year, sex) pair. Shape: each per-year SELECT is `SELECT 'race_YYYY' AS race_year, Sex, COUNT(*) AS n FROM race_YYYY WHERE ... GROUP BY Sex`, then UNION ALL across years.
-14. "male 5K" means WHERE Sex='M' AND event='5K'. "female 10K" means Sex='F' AND event='10K'.
-15. For unique participants use COUNT(DISTINCT "Participant ID"); otherwise COUNT(*). Alias calculated columns with readable snake_case names.
+14. "male vs female" / "male and female" / "by sex" / "sex breakdown" — return ONE ROW PER SEX using GROUP BY "Sex". Restrict to "Sex" IN ('M','F') when the phrasing is a male-vs-female comparison; otherwise include all sexes present. Do NOT use CASE WHEN columns to produce a single row — always use GROUP BY rows.
+15. "sex breakdown across all years" or "by sex for each year" — produce ONE ROW PER (year, sex) pair. Shape: each per-year SELECT is `SELECT 'race_YYYY' AS race_year, "Sex", COUNT(*) AS n FROM race_YYYY WHERE ... GROUP BY "Sex"`, then UNION ALL across years.
+16. "male 5K" means WHERE "Sex"='M' AND event='5K'. "female 10K" means "Sex"='F' AND event='10K'.
+17. For unique participants use COUNT(DISTINCT "Participant ID"); otherwise COUNT(*). Alias calculated columns with readable snake_case names.
 
 EVENT NAME MATCHING:
-16. Exact event codes like '5K', '10K' use equality: event='5K' or event='10K'.
-17. Descriptive event phrases refer to ALL event rows whose name contains a matching stem — use LIKE with wildcards, and pick the SHORTEST DISTINCTIVE STEM so variant spellings/apostrophes/suffixes all match.
-      - "Fido Mile" or "Fido" → event LIKE '%Fido%' (case-insensitive; captures '1 Mile - Fido Mile', 'FIDO MILE Family member***', 'Additional Fido Escorts')
-      - "Kids Fun Run" or "Kid's Fun Run" → event = "1 Mile - Kid's Fun Run" (exact match, NOT LIKE). Do NOT include "Parent Escort - 1 Mile Kids' Fun Run" — that's a different event for parents escorting kids, not the Kids Fun Run itself.
-      - "Virtual Run" → event LIKE '%Virtual%'
-    Use COLLATE NOCASE if the variants have mixed case. Check the schema's "Event counts in this table" lines to confirm which variants exist before writing the LIKE pattern.
+18. Exact event codes like '5K', '10K' use equality: event='5K' or event='10K'.
+19. Descriptive event phrases refer to ALL event rows whose name contains a matching stem — use ILIKE with wildcards (case-insensitive), and pick the SHORTEST DISTINCTIVE STEM so variant spellings/apostrophes/suffixes all match.
+      - "Fido Mile" or "Fido" → event ILIKE '%Fido%' (captures '1 Mile - Fido Mile', 'FIDO MILE Family member***', 'Additional Fido Escorts')
+      - "Kids Fun Run" or "Kid's Fun Run" → event = '1 Mile - Kid''s Fun Run' (exact match, NOT ILIKE). Do NOT include 'Parent Escort - 1 Mile Kids'' Fun Run' — that's a different event for parents escorting kids, not the Kids Fun Run itself.
+      - "Virtual Run" → event ILIKE '%Virtual%'
+    Check the schema's sample event values to confirm which variants exist before writing the ILIKE pattern.
 
 CROSS-YEAR COVERAGE:
-18. All years (race_2022 through race_2025) have complete data — include race_2025 in cross-year queries the same as any other year.
+20. All years (race_2022 through race_2025) have complete data — include race_2025 in cross-year queries the same as any other year.
 
 DATE ARITHMETIC:
-19. "N days before the race" means CUMULATIVE registrations whose Date is on or before (that race's Registration end date minus N days) — INCLUSIVE. It is a running total, not a single-day window. For race_2024 (end 2024-10-12), "3 days before the race" → WHERE date(Date) <= date('2024-10-12','-3 days'). Use '<=', not '<' and not BETWEEN.
-20. When "days before the race" is asked across all years, apply rule 19 per year using each year's own Registration end date (from the info table / the values listed in "Race metadata" below) and emit one row per year per rule 9.
+21. "N days before the race" means CUMULATIVE registrations whose "Date" is on or before (that race's Registration end date minus N days) — INCLUSIVE. It is a running total, not a single-day window. For race_2024 (end 2024-10-12), "3 days before the race" → WHERE "Date"::date <= DATE '2024-10-12' - INTERVAL '3 days'. Use '<=', not '<' and not BETWEEN.
+22. When "days before the race" is asked across all years, apply rule 21 per year using each year's own Registration end date (from the info table / the values listed in "Race metadata" below) and emit one row per year per rule 11.
 
 RESPONSE FORMAT:
 Return ONLY the SQL query. No explanation, no markdown, no code fences. Just the raw SQL.
