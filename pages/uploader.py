@@ -102,10 +102,15 @@ submit = st.button("submit")
 
 
 if submit and uploaded:
-    st.write(f"CSV is reporting data for: {df['Date'].iloc[0].date()}")
-    string = info_df[info_df['Name'] == year_selector]['Registration end date'].iloc[0]
-    if today >= pd.Timestamp(df['Date'].iloc[0]).date() and today <= pd.Timestamp(string).date():
-        st.write("data within range of race")
+    st.write(f"CSV is reporting data from: {df['Date'].iloc[0].date()} to {df['Date'].iloc[-1].date()}")
+    race_row = info_df[info_df['Name'] == year_selector].iloc[0]
+    reg_start = pd.Timestamp(race_row['Registration start date']).date()
+    reg_end = pd.Timestamp(race_row['Registration end date']).date()
+    csv_first = pd.Timestamp(df['Date'].iloc[0]).date()
+    csv_last = pd.Timestamp(df['Date'].iloc[-1]).date()
+
+    if reg_start <= csv_first and csv_last <= reg_end:
+        st.write(f"CSV dates fall within {year_selector} registration window ({reg_start} to {reg_end})")
         # Compare the newest date in each set explicitly. Postgres does not
         # guarantee row order without ORDER BY, so positional indexing (iloc[-1])
         # is not a reliable way to find the latest registration.
@@ -136,9 +141,9 @@ if submit and uploaded:
                     st.error(f"Database write failed: {e}")
 
         else:
-            st.error("This appears to be old data for this year and cannot be uploaded")
+            st.error("This appears to be an older snapshot than what's already in the DB and cannot be uploaded")
     else:
-        st.error("Uploaded data is invalid, please check the year of data you are uploading for is the current year")
+        st.error(f"CSV dates ({csv_first} to {csv_last}) do not fall within {year_selector}'s registration window ({reg_start} to {reg_end}). Check you selected the right race.")
 
 
 

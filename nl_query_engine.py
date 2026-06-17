@@ -11,7 +11,7 @@ Architecture: "Text-to-SQL" pattern
 - Results are returned as a pandas DataFrame for visualization
 
 Why this approach?
-- The data is already in SQLite — no need to build a separate index
+- The data is already in Postgres — no need to build a separate index
 - SQL is deterministic and auditable — users can see exactly what query ran
 - The LLM only needs to know the schema, not the data itself
 - No vector DB, no embeddings, no RAG pipeline — minimal dependencies
@@ -128,20 +128,45 @@ def get_db_schema() -> str:
 SYSTEM_PROMPT = """You are a SQL query generator for a race registration database.
 You translate natural language questions into PostgreSQL SELECT queries.
 
-RULES:
-1. ONLY generate SELECT statements. Never INSERT, UPDATE, DELETE, DROP, ALTER, or any DDL.
-2. Always return valid PostgreSQL syntax.
-3. Identifiers are CASE-SENSITIVE in this database. Any column whose name has uppercase letters or spaces MUST be wrapped in double quotes: "Participant ID", "Date", "Sex", "City", "State", "ZIP/Postal Code", "Country", "Age". The 'race_name' and 'event' columns are lowercase and may be left unquoted.
-4. The Date column is a real timestamp. Compare it directly to date literals, e.g. "Date" < DATE '2024-10-09', or use "Date"::date. Do not use SQLite functions like date() or substr() on it.
-5. ALL participant registrations live in ONE table called participants. Each row belongs to a race identified by the race_name column (values like 'race_2022', 'race_2023', 'race_2024', ...). Columns: race_name, "Participant ID", "Date", "Sex", "City", "State", "ZIP/Postal Code", "Country", event, "Age". To restrict to a single race, filter with WHERE race_name = 'race_2024'.
-6. The 'info' table maps race names to registration date ranges (columns: "Name", "Registration start date", "Registration end date"). info."Name" matches participants.race_name.
-7. When users ask about "days before the race", calculate from the Registration end date in the info table for that race. For example, "3 days before the race" for race_2024 (end date 2024-10-12) means DATE '2024-10-12' - INTERVAL '3 days'. Combine with WHERE race_name = 'race_2024'.
-8. When users ask "across all years" or "for each year", do NOT use UNION — just GROUP BY race_name on the participants table (e.g. SELECT race_name, COUNT(*) FROM participants GROUP BY race_name ORDER BY race_name).
-9. For counts, use COUNT(*). For unique participants, use COUNT(DISTINCT "Participant ID").
-10. Always alias calculated columns with readable names.
-11. If the question is ambiguous, make a reasonable assumption and proceed.
-12. The 'event' column contains sub-event names like '5K', '10K', '1 Mile - Fido Mile', etc.
-13. "registrants" means rows in the participants table. Each row = one registration. Filter by race_name to scope to a particular race/year.
+POSTGRESQL SYNTAX (the database is PostgreSQL — these are mandatory):
+1. ONLY generate SELECT statements. Never INSERT, UPDATE, DELETE, DROP, ALTER, or any DDL. Single statement only.
+2. Identifiers are CASE-SENSITIVE. Every column whose name has uppercase letters, spaces, or slashes MUST be wrapped in double quotes: "Participant ID", "Date", "Sex", "City", "State", "ZIP/Postal Code", "Country", "Age". The 'race_name' and 'event' columns are lowercase and may be left unquoted.
+3. The "Date" column is a real timestamp — compare it directly to date literals, e.g. "Date" < DATE '2024-10-09', or cast with "Date"::date. NEVER use SQLite functions like date() or substr() on it.
+4. For case-insensitive text matching use ILIKE (never LIKE ... COLLATE NOCASE). String literals use single quotes; escape an apostrophe by doubling it ('Kid''s'). Never use double quotes for string values — double quotes mean an identifier.
+
+SCHEMA CONVENTIONS:
+5. ALL participant registrations live in ONE table called participants. Each row belongs to a race identified by the race_name column (values like 'race_2022', 'race_2023', 'race_2024', ...). Columns: race_name, "Participant ID", "Date", "Sex", "City", "State", "ZIP/Postal Code", "Country", event, "Age". To restrict to a single race, filter with WHERE race_name = 'race_2024'. There are no per-year tables — never write FROM race_2024; always FROM participants with a race_name filter.
+6. The 'info' table maps race names to registration date ranges (columns: "Name", "Registration start date", "Registration end date"). info."Name" matches participants.race_name. When answering questions about registration dates / windows, ALWAYS include the "Name" column in the SELECT so the user can see which race the dates belong to.
+7. "Sex" values are 'M' (male), 'F' (female), 'N' (non-binary), 'U' (unknown).
+8. "registrants" = rows in the participants table. Each row = one registration. Filter by race_name to scope to a particular race/year.
+
+SINGLE-YEAR vs CROSS-YEAR — IMPORTANT:
+9. If the question names ONE specific year (e.g. "race_2024", "in 2023", "for race_2022", "in race_2025"), filter with WHERE race_name = 'race_YYYY' and do NOT add a race_name / year label column to the output — the output columns must be EXACTLY the requested metric(s). For example, "How many male vs female in race_2023?" → `SELECT "Sex", COUNT(*) FROM participants WHERE race_name = 'race_2023' AND "Sex" IN ('M','F') GROUP BY "Sex"`. And "Which event had the most registrations in race_2023?" → `SELECT event, COUNT(*) FROM participants WHERE race_name = 'race_2023' GROUP BY event ORDER BY COUNT(*) DESC LIMIT 1`. The year is already known — don't duplicate it.
+10. If the question mentions multiple years, "each year", "across all years", "by year", "per year", "compare X and Y" across years, or "how did X change" — produce ONE ROW PER YEAR by adding race_name to GROUP BY (e.g. `SELECT race_name, COUNT(*) AS n FROM participants GROUP BY race_name ORDER BY race_name`). Do NOT use UNION ALL — grouping on race_name is the single-table equivalent. Never use SELECT * — list specific columns explicitly.
+11. In cross-year output, the FIRST column MUST be race_name (the 'race_YYYY' label). The metric columns come AFTER. Never put the metric before the race_name column.
+12. "from YEAR_A to YEAR_B" phrased as a change or comparison ("change from A to B", "compare between A and B", "how did X change from A to B") means ONLY the two endpoint years (exactly 2 rows). Restrict with WHERE race_name IN ('race_A', 'race_B') and GROUP BY race_name. Do NOT include years in between. For example, "between 2022 and 2024" in a comparison context means race_2022 and race_2024 only — never include race_2023.
+13. Rule 10 applies to "each year" only — NOT to "each event", "each city", etc. "Each event" means GROUP BY event (within a race_name filter), not GROUP BY race_name. Add race_name to the grouping solely when the grouping dimension is year.
+
+DEMOGRAPHIC / GROUPING QUERIES:
+14. "male vs female" / "male and female" / "by sex" / "sex breakdown" — return ONE ROW PER SEX using GROUP BY "Sex". Restrict to "Sex" IN ('M','F') when the phrasing is a male-vs-female comparison; otherwise include all sexes present. Do NOT use CASE WHEN columns to produce a single row — always use GROUP BY rows.
+15. "sex breakdown across all years" or "by sex for each year" — produce ONE ROW PER (year, sex) pair: `SELECT race_name, "Sex", COUNT(*) AS n FROM participants WHERE ... GROUP BY race_name, "Sex" ORDER BY race_name, "Sex"`.
+16. "male 5K" means WHERE "Sex"='M' AND event='5K'. "female 10K" means "Sex"='F' AND event='10K'.
+17. For unique participants use COUNT(DISTINCT "Participant ID"); otherwise COUNT(*). Alias calculated columns with readable snake_case names.
+
+EVENT NAME MATCHING:
+18. Exact event codes like '5K', '10K' use equality: event='5K' or event='10K'.
+19. Descriptive event phrases refer to ALL event rows whose name contains a matching stem — use ILIKE with wildcards (case-insensitive), and pick the SHORTEST DISTINCTIVE STEM so variant spellings/apostrophes/suffixes all match.
+      - "Fido Mile" or "Fido" → event ILIKE '%Fido%' (captures '1 Mile - Fido Mile', 'FIDO MILE Family member***', 'Additional Fido Escorts')
+      - "Kids Fun Run" or "Kid's Fun Run" → event = '1 Mile - Kid''s Fun Run' (exact match, NOT ILIKE). Do NOT include 'Parent Escort - 1 Mile Kids'' Fun Run' — that's a different event for parents escorting kids, not the Kids Fun Run itself.
+      - "Virtual Run" → event ILIKE '%Virtual%'
+    Check the schema's sample event values to confirm which variants exist before writing the ILIKE pattern.
+
+CROSS-YEAR COVERAGE:
+20. All years have complete data in the participants table — include every year (including the latest) in cross-year queries the same as any other.
+
+DATE ARITHMETIC:
+21. "N days before the race" means CUMULATIVE registrations whose "Date" is on or before (that race's Registration end date minus N days) — INCLUSIVE. It is a running total, not a single-day window. For race_2024 (end 2024-10-12), "3 days before the race" → `WHERE race_name = 'race_2024' AND "Date"::date <= DATE '2024-10-12' - INTERVAL '3 days'`. Use '<=', not '<' and not BETWEEN.
+22. When "days before the race" is asked across all years, apply rule 21 per year using each year's own Registration end date (from the info table / the values listed in "Race metadata" below), grouping on race_name per rule 10/11.
 
 RESPONSE FORMAT:
 Return ONLY the SQL query. No explanation, no markdown, no code fences. Just the raw SQL.
@@ -151,7 +176,7 @@ DATABASE SCHEMA:
 """
 
 
-def generate_sql(question: str, api_key: str, model: str = "gpt-4o-mini") -> str:
+def generate_sql(question: str, api_key: str, model: str = "gpt-4o-mini", provider: str = "openai") -> str:
     """
     Uses an LLM to translate a natural language question into a SQL query.
 
@@ -163,7 +188,14 @@ def generate_sql(question: str, api_key: str, model: str = "gpt-4o-mini") -> str
     The user can override to gpt-4o for harder questions if needed.
     """
     schema = get_db_schema()
-    client = OpenAI(api_key=api_key)
+
+    if provider == "gemini":
+        client = OpenAI(
+            api_key=api_key,
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        )
+    else:
+        client = OpenAI(api_key=api_key)
 
     response = client.chat.completions.create(
         model=model,
@@ -246,7 +278,65 @@ def execute_query(sql: str) -> pd.DataFrame:
         conn.close()
 
 
-def ask(question: str, api_key: str, model: str = "gpt-4o-mini") -> dict:
+# ---------------------------------------------------------------------------
+# Post-processing normalization layer.
+# Keeps SQL generation simple and lets us normalize user-facing text values
+# (e.g. "belmont ", "BELMONT", "Belmont" → "Belmont") without relying on the
+# LLM to write LOWER(TRIM(...)) correctly. Running after SQL execution also
+# means we can collapse case/whitespace duplicates in the result.
+# ---------------------------------------------------------------------------
+
+# Columns whose string values should be normalized for display, keyed by the
+# lowercased column name. The callable produces the canonical display form.
+NORMALIZERS = {
+    "city": lambda s: str(s).strip().title() if pd.notna(s) else s,
+}
+
+
+def _norm_col_name(col: str) -> str | None:
+    """Return a normalizer key if this column should be normalized, else None."""
+    return col.lower() if col.lower() in NORMALIZERS else None
+
+
+def _strip_limit(sql: str) -> tuple[str, int | None]:
+    """Remove a trailing LIMIT N from SQL so we can re-apply it after
+    normalization. Only strips a final top-level LIMIT, not ones inside
+    subqueries."""
+    match = re.search(r'\bLIMIT\s+(\d+)\s*;?\s*$', sql, re.IGNORECASE)
+    if not match:
+        return sql, None
+    return sql[:match.start()].rstrip().rstrip(';'), int(match.group(1))
+
+
+def normalize_result(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize known text columns (e.g. City) and collapse resulting
+    duplicates by summing integer columns. Re-sorts by the first numeric
+    column descending so top-N ordering is preserved."""
+    if df is None or df.empty:
+        return df
+
+    norm_cols = [c for c in df.columns if _norm_col_name(c) is not None]
+    if not norm_cols:
+        return df
+
+    df = df.copy()
+    for c in norm_cols:
+        df[c] = df[c].map(NORMALIZERS[_norm_col_name(c)])
+
+    other_cols = [c for c in df.columns if c not in norm_cols]
+    int_cols = [c for c in other_cols if pd.api.types.is_integer_dtype(df[c])]
+
+    # Only re-aggregate when every non-normalized column is an integer count.
+    # Mixed-type rows (e.g. averages, percentages) are left as-is to avoid
+    # silently summing things that should be averaged.
+    if other_cols and len(int_cols) == len(other_cols):
+        df = df.groupby(norm_cols, as_index=False, sort=False)[int_cols].sum()
+        df = df.sort_values(int_cols[0], ascending=False).reset_index(drop=True)
+
+    return df
+
+
+def ask(question: str, api_key: str, model: str = "gpt-4o-mini", provider: str = "openai") -> dict:
     """
     End-to-end: question in, structured result out.
 
@@ -258,7 +348,7 @@ def ask(question: str, api_key: str, model: str = "gpt-4o-mini") -> dict:
     - chart_hint: suggestion for what visualization to use
     """
     try:
-        sql = generate_sql(question, api_key, model)
+        sql = generate_sql(question, api_key, model, provider)
     except Exception as e:
         return {
             "question": question,
@@ -278,8 +368,14 @@ def ask(question: str, api_key: str, model: str = "gpt-4o-mini") -> dict:
             "chart_hint": None,
         }
 
+    # If the SQL touches a column we normalize (e.g. City) and ends in LIMIT,
+    # strip the LIMIT so we can aggregate case/whitespace variants that would
+    # otherwise be cut off, then re-apply the LIMIT after normalization.
+    needs_norm = any(col in sql.lower() for col in NORMALIZERS.keys())
+    exec_sql, original_limit = (_strip_limit(sql) if needs_norm else (sql, None))
+
     try:
-        df = execute_query(sql)
+        df = execute_query(exec_sql)
     except Exception as e:
         return {
             "question": question,
@@ -288,6 +384,10 @@ def ask(question: str, api_key: str, model: str = "gpt-4o-mini") -> dict:
             "error": f"Query execution failed: {str(e)}",
             "chart_hint": None,
         }
+
+    df = normalize_result(df)
+    if original_limit is not None:
+        df = df.head(original_limit).reset_index(drop=True)
 
     # Determine chart type based on result shape
     chart_hint = infer_chart_type(df)

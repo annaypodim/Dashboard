@@ -59,7 +59,7 @@ except Exception as e:
     st.stop()
 
 actual_registrants       = len(df)
-race_income_per_reg      = fin["Race income"]          / actual_registrants
+race_income_per_reg      = fin["Total income less sponsorship"] / actual_registrants
 var_per_reg              = fin["Total Variable expense"] / actual_registrants
 contribution_margin      = race_income_per_reg - var_per_reg
 breakeven_regs           = (fin["Total Fixed expense"] / contribution_margin
