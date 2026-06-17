@@ -3,7 +3,6 @@ import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime
 from class_init import *
-from class_init import _validate_table_name
 
 # authenticate user check
 if not authenticate_user():
@@ -54,7 +53,7 @@ st.write(f"Currently viewing financial data for: **{race_selector}**")
 
 # ── load registrant data ──────────────────────────────────────────────────────
 try:
-    df = pd.read_sql(f'SELECT * FROM "{_validate_table_name(race_selector)}"', conn)
+    df = load_race_participants(race_selector)
 except Exception as e:
     st.error(f"Error loading data for {race_selector}: {e}")
     st.stop()
@@ -121,7 +120,7 @@ if len(available) > 1:
     for yr in sorted(available):
         f = FINANCE_DATA[yr]
         try:
-            yr_regs = len(pd.read_sql(f'SELECT * FROM "{_validate_table_name(yr)}"', conn))
+            yr_regs = len(load_race_participants(yr))
         except Exception:
             yr_regs = None
 

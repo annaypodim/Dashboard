@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime
 from class_init import (
-    authenticate_user, connect_db, Information, Race, _validate_table_name
+    authenticate_user, Information, Race, load_race_participants
 )
 
 # authenticate user check
@@ -29,16 +29,12 @@ race_selector = st.selectbox(
 
 st.write(f'Currently viewing age data for: **{race_selector}**')
 
-# load race data with validated table name
-conn = connect_db()
+# load race data for the selected race
 try:
-    safe_name = _validate_table_name(race_selector)
-    df = pd.read_sql(f'SELECT * FROM "{safe_name}"', conn)
+    df = load_race_participants(race_selector)
 except Exception as e:
     st.error(f'Error loading data for {race_selector}: {e}')
     st.stop()
-finally:
-    conn.close()
 
 # ensure uploaded column names match expected raceroster column names
 expected_columns = ['Participant ID', 'Date', 'Sex', 'City', 'State', 'ZIP/Postal Code', 'Country', 'event', 'Age']

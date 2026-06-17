@@ -44,9 +44,20 @@ def get_db_schema() -> str:
             conn,
         )["table_name"].tolist()
 
+        # Participant data now lives in the single 'participants' table. The old
+        # per-race tables (named after each race in 'info') are kept only as a
+        # backup, so exclude them from the schema the LLM sees -- otherwise it
+        # might generate queries against stale tables.
+        legacy_race_tables = set(
+            pd.read_sql("SELECT * FROM info", conn)["Name"].tolist()
+        )
+
         schema_parts = []
 
         for table in tables:
+            if table in legacy_race_tables:
+                continue  # superseded by the participants table
+
             # Validate table name before using it in queries.
             try:
                 safe_table = _validate_table_name(table)
@@ -71,9 +82,11 @@ def get_db_schema() -> str:
                 f'SELECT COUNT(*) AS n FROM "{safe_table}"', conn
             )["n"].iloc[0]
 
-            # Get sample values for key columns to help the LLM understand data format.
+            # Get sample values for key columns to help the LLM understand data
+            # format. Only the participants table has event/Date columns; querying
+            # them on info/finance errors and (in Postgres) aborts the transaction.
             sample_info = ""
-            if table != "info":
+            if table == "participants":
                 try:
                     events = pd.read_sql(
                         f'SELECT DISTINCT event FROM "{safe_table}" LIMIT 10', conn
@@ -117,26 +130,26 @@ You translate natural language questions into PostgreSQL SELECT queries.
 
 POSTGRESQL SYNTAX (the database is PostgreSQL — these are mandatory):
 1. ONLY generate SELECT statements. Never INSERT, UPDATE, DELETE, DROP, ALTER, or any DDL. Single statement only.
-2. Identifiers are CASE-SENSITIVE. Every column whose name has uppercase letters, spaces, or slashes MUST be wrapped in double quotes: "Participant ID", "Date", "Sex", "City", "State", "ZIP/Postal Code", "Country", "Age". The 'event' column is lowercase and may be left unquoted.
+2. Identifiers are CASE-SENSITIVE. Every column whose name has uppercase letters, spaces, or slashes MUST be wrapped in double quotes: "Participant ID", "Date", "Sex", "City", "State", "ZIP/Postal Code", "Country", "Age". The 'race_name' and 'event' columns are lowercase and may be left unquoted.
 3. The "Date" column is a real timestamp — compare it directly to date literals, e.g. "Date" < DATE '2024-10-09', or cast with "Date"::date. NEVER use SQLite functions like date() or substr() on it.
 4. For case-insensitive text matching use ILIKE (never LIKE ... COLLATE NOCASE). String literals use single quotes; escape an apostrophe by doubling it ('Kid''s'). Never use double quotes for string values — double quotes mean an identifier.
 
 SCHEMA CONVENTIONS:
-5. Each race table (race_2022..race_2025) has the same columns: "index", "Participant ID", "Date", "Sex", "City", "State", "ZIP/Postal Code", "Country", event, "Age".
-6. The 'info' table maps race names ('race_2022', 'race_2023', ...) to "Registration start date" and "Registration end date" (column "Name"). When answering questions about registration dates / windows, ALWAYS include the "Name" column in the SELECT so the user can see which race the dates belong to.
+5. ALL participant registrations live in ONE table called participants. Each row belongs to a race identified by the race_name column (values like 'race_2022', 'race_2023', 'race_2024', ...). Columns: race_name, "Participant ID", "Date", "Sex", "City", "State", "ZIP/Postal Code", "Country", event, "Age". To restrict to a single race, filter with WHERE race_name = 'race_2024'. There are no per-year tables — never write FROM race_2024; always FROM participants with a race_name filter.
+6. The 'info' table maps race names to registration date ranges (columns: "Name", "Registration start date", "Registration end date"). info."Name" matches participants.race_name. When answering questions about registration dates / windows, ALWAYS include the "Name" column in the SELECT so the user can see which race the dates belong to.
 7. "Sex" values are 'M' (male), 'F' (female), 'N' (non-binary), 'U' (unknown).
-8. "registrants" = rows in a race table. Each row = one registration.
+8. "registrants" = rows in the participants table. Each row = one registration. Filter by race_name to scope to a particular race/year.
 
 SINGLE-YEAR vs CROSS-YEAR — IMPORTANT:
-9. If the question names ONE specific year/table (e.g. "race_2024", "in 2023", "for race_2022", "in race_2025"), query ONLY that table. The output columns must be EXACTLY the requested metric(s) — do NOT add a race_year / year label column. For example, "How many male vs female in race_2023?" → `SELECT "Sex", COUNT(*) FROM race_2023 WHERE "Sex" IN ('M','F') GROUP BY "Sex"` (NOT `SELECT 'race_2023' AS race_year, "Sex", COUNT(*) ...`). And "Which event had the most registrations in race_2023?" → `SELECT event, COUNT(*) FROM race_2023 GROUP BY event ORDER BY COUNT(*) DESC LIMIT 1` (NOT with a race_year column). The year is already known from the table name — don't duplicate it.
-10. If the question mentions multiple years, "each year", "across all years", "by year", "per year", "compare X and Y" across years, or "how did X change" — produce ONE ROW PER YEAR using UNION ALL of per-year SELECTs. Never use SELECT * in UNION ALL queries — list specific columns explicitly.
-11. In cross-year output, the FIRST column MUST be the year label as 'race_YYYY' (e.g. 'race_2022'), aliased AS race_year. The metric columns come AFTER. Never put the metric before the year column.
-12. "from YEAR_A to YEAR_B" phrased as a change or comparison ("change from A to B", "compare between A and B", "how did X change from A to B") means ONLY the two endpoint years (exactly 2 rows, one UNION ALL per endpoint). Do NOT include years in between. For example, "between 2022 and 2024" in a comparison context means year 2022 and year 2024 only — never include 2023.
-13. Rule 10 applies to "each year" only — NOT to "each event", "each city", etc. "Each event" means GROUP BY event within one table, not UNION ALL. Apply the per-year UNION pattern solely when the grouping dimension is year/table.
+9. If the question names ONE specific year (e.g. "race_2024", "in 2023", "for race_2022", "in race_2025"), filter with WHERE race_name = 'race_YYYY' and do NOT add a race_name / year label column to the output — the output columns must be EXACTLY the requested metric(s). For example, "How many male vs female in race_2023?" → `SELECT "Sex", COUNT(*) FROM participants WHERE race_name = 'race_2023' AND "Sex" IN ('M','F') GROUP BY "Sex"`. And "Which event had the most registrations in race_2023?" → `SELECT event, COUNT(*) FROM participants WHERE race_name = 'race_2023' GROUP BY event ORDER BY COUNT(*) DESC LIMIT 1`. The year is already known — don't duplicate it.
+10. If the question mentions multiple years, "each year", "across all years", "by year", "per year", "compare X and Y" across years, or "how did X change" — produce ONE ROW PER YEAR by adding race_name to GROUP BY (e.g. `SELECT race_name, COUNT(*) AS n FROM participants GROUP BY race_name ORDER BY race_name`). Do NOT use UNION ALL — grouping on race_name is the single-table equivalent. Never use SELECT * — list specific columns explicitly.
+11. In cross-year output, the FIRST column MUST be race_name (the 'race_YYYY' label). The metric columns come AFTER. Never put the metric before the race_name column.
+12. "from YEAR_A to YEAR_B" phrased as a change or comparison ("change from A to B", "compare between A and B", "how did X change from A to B") means ONLY the two endpoint years (exactly 2 rows). Restrict with WHERE race_name IN ('race_A', 'race_B') and GROUP BY race_name. Do NOT include years in between. For example, "between 2022 and 2024" in a comparison context means race_2022 and race_2024 only — never include race_2023.
+13. Rule 10 applies to "each year" only — NOT to "each event", "each city", etc. "Each event" means GROUP BY event (within a race_name filter), not GROUP BY race_name. Add race_name to the grouping solely when the grouping dimension is year.
 
 DEMOGRAPHIC / GROUPING QUERIES:
 14. "male vs female" / "male and female" / "by sex" / "sex breakdown" — return ONE ROW PER SEX using GROUP BY "Sex". Restrict to "Sex" IN ('M','F') when the phrasing is a male-vs-female comparison; otherwise include all sexes present. Do NOT use CASE WHEN columns to produce a single row — always use GROUP BY rows.
-15. "sex breakdown across all years" or "by sex for each year" — produce ONE ROW PER (year, sex) pair. Shape: each per-year SELECT is `SELECT 'race_YYYY' AS race_year, "Sex", COUNT(*) AS n FROM race_YYYY WHERE ... GROUP BY "Sex"`, then UNION ALL across years.
+15. "sex breakdown across all years" or "by sex for each year" — produce ONE ROW PER (year, sex) pair: `SELECT race_name, "Sex", COUNT(*) AS n FROM participants WHERE ... GROUP BY race_name, "Sex" ORDER BY race_name, "Sex"`.
 16. "male 5K" means WHERE "Sex"='M' AND event='5K'. "female 10K" means "Sex"='F' AND event='10K'.
 17. For unique participants use COUNT(DISTINCT "Participant ID"); otherwise COUNT(*). Alias calculated columns with readable snake_case names.
 
@@ -149,11 +162,11 @@ EVENT NAME MATCHING:
     Check the schema's sample event values to confirm which variants exist before writing the ILIKE pattern.
 
 CROSS-YEAR COVERAGE:
-20. All years (race_2022 through race_2025) have complete data — include race_2025 in cross-year queries the same as any other year.
+20. All years have complete data in the participants table — include every year (including the latest) in cross-year queries the same as any other.
 
 DATE ARITHMETIC:
-21. "N days before the race" means CUMULATIVE registrations whose "Date" is on or before (that race's Registration end date minus N days) — INCLUSIVE. It is a running total, not a single-day window. For race_2024 (end 2024-10-12), "3 days before the race" → WHERE "Date"::date <= DATE '2024-10-12' - INTERVAL '3 days'. Use '<=', not '<' and not BETWEEN.
-22. When "days before the race" is asked across all years, apply rule 21 per year using each year's own Registration end date (from the info table / the values listed in "Race metadata" below) and emit one row per year per rule 11.
+21. "N days before the race" means CUMULATIVE registrations whose "Date" is on or before (that race's Registration end date minus N days) — INCLUSIVE. It is a running total, not a single-day window. For race_2024 (end 2024-10-12), "3 days before the race" → `WHERE race_name = 'race_2024' AND "Date"::date <= DATE '2024-10-12' - INTERVAL '3 days'`. Use '<=', not '<' and not BETWEEN.
+22. When "days before the race" is asked across all years, apply rule 21 per year using each year's own Registration end date (from the info table / the values listed in "Race metadata" below), grouping on race_name per rule 10/11.
 
 RESPONSE FORMAT:
 Return ONLY the SQL query. No explanation, no markdown, no code fences. Just the raw SQL.

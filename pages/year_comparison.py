@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime
 from class_init import (
-    authenticate_user, connect_db, Information, Race, _validate_table_name
+    authenticate_user, Information, Race, load_race_participants
 )
 
 # authenticate user check
@@ -29,15 +29,11 @@ age_labels = ['0-9', '10-19', '20-29', '30-39', '40-49', '50-59', '60-69', '70-7
 # --- load all race data upfront ---
 race_data = {}  # race_name -> df
 for race in races:
-    conn = connect_db()
     try:
-        safe_name = _validate_table_name(race.race_name)
-        df = pd.read_sql(f'SELECT * FROM "{safe_name}"', conn)
+        df = load_race_participants(race.race_name)
     except Exception as e:
         st.warning(f'Could not load data for {race.race_name}: {e}')
         continue
-    finally:
-        conn.close()
 
     missing_cols = [col for col in expected_columns if col not in df.columns]
     if missing_cols:
