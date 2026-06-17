@@ -44,9 +44,20 @@ def get_db_schema() -> str:
             conn,
         )["table_name"].tolist()
 
+        # Participant data now lives in the single 'participants' table. The old
+        # per-race tables (named after each race in 'info') are kept only as a
+        # backup, so exclude them from the schema the LLM sees -- otherwise it
+        # might generate queries against stale tables.
+        legacy_race_tables = set(
+            pd.read_sql("SELECT * FROM info", conn)["Name"].tolist()
+        )
+
         schema_parts = []
 
         for table in tables:
+            if table in legacy_race_tables:
+                continue  # superseded by the participants table
+
             # Validate table name before using it in queries.
             try:
                 safe_table = _validate_table_name(table)
@@ -71,9 +82,11 @@ def get_db_schema() -> str:
                 f'SELECT COUNT(*) AS n FROM "{safe_table}"', conn
             )["n"].iloc[0]
 
-            # Get sample values for key columns to help the LLM understand data format.
+            # Get sample values for key columns to help the LLM understand data
+            # format. Only the participants table has event/Date columns; querying
+            # them on info/finance errors and (in Postgres) aborts the transaction.
             sample_info = ""
-            if table != "info":
+            if table == "participants":
                 try:
                     events = pd.read_sql(
                         f'SELECT DISTINCT event FROM "{safe_table}" LIMIT 10', conn
@@ -118,17 +131,17 @@ You translate natural language questions into PostgreSQL SELECT queries.
 RULES:
 1. ONLY generate SELECT statements. Never INSERT, UPDATE, DELETE, DROP, ALTER, or any DDL.
 2. Always return valid PostgreSQL syntax.
-3. Identifiers are CASE-SENSITIVE in this database. Table names (e.g. "race_2024") and any column whose name has uppercase letters or spaces MUST be wrapped in double quotes: "Participant ID", "Date", "Sex", "City", "State", "ZIP/Postal Code", "Country", "Age". The 'event' column is lowercase and may be left unquoted.
+3. Identifiers are CASE-SENSITIVE in this database. Any column whose name has uppercase letters or spaces MUST be wrapped in double quotes: "Participant ID", "Date", "Sex", "City", "State", "ZIP/Postal Code", "Country", "Age". The 'race_name' and 'event' columns are lowercase and may be left unquoted.
 4. The Date column is a real timestamp. Compare it directly to date literals, e.g. "Date" < DATE '2024-10-09', or use "Date"::date. Do not use SQLite functions like date() or substr() on it.
-5. Each race table (race_2022, race_2023, etc.) has the same schema with columns: "Participant ID", "Date", "Sex", "City", "State", "ZIP/Postal Code", "Country", event, "Age".
-6. The 'info' table maps race names to registration date ranges (columns: "Name", "Registration start date", "Registration end date").
-7. When users ask about "days before the race", calculate from the Registration end date in the info table. For example, "3 days before the race" for race_2024 (end date 2024-10-12) means DATE '2024-10-12' - INTERVAL '3 days'.
-8. When users ask "across all years" or "for each year", write a UNION ALL query combining all race tables, adding a 'race_year' column. IMPORTANT: Never use SELECT * in UNION ALL queries — always list specific columns explicitly (e.g. "Participant ID", "Date", "Sex", "City", "State", "ZIP/Postal Code", "Country", event, "Age").
+5. ALL participant registrations live in ONE table called participants. Each row belongs to a race identified by the race_name column (values like 'race_2022', 'race_2023', 'race_2024', ...). Columns: race_name, "Participant ID", "Date", "Sex", "City", "State", "ZIP/Postal Code", "Country", event, "Age". To restrict to a single race, filter with WHERE race_name = 'race_2024'.
+6. The 'info' table maps race names to registration date ranges (columns: "Name", "Registration start date", "Registration end date"). info."Name" matches participants.race_name.
+7. When users ask about "days before the race", calculate from the Registration end date in the info table for that race. For example, "3 days before the race" for race_2024 (end date 2024-10-12) means DATE '2024-10-12' - INTERVAL '3 days'. Combine with WHERE race_name = 'race_2024'.
+8. When users ask "across all years" or "for each year", do NOT use UNION — just GROUP BY race_name on the participants table (e.g. SELECT race_name, COUNT(*) FROM participants GROUP BY race_name ORDER BY race_name).
 9. For counts, use COUNT(*). For unique participants, use COUNT(DISTINCT "Participant ID").
 10. Always alias calculated columns with readable names.
 11. If the question is ambiguous, make a reasonable assumption and proceed.
 12. The 'event' column contains sub-event names like '5K', '10K', '1 Mile - Fido Mile', etc.
-13. "registrants" means rows in a race table. Each row = one registration.
+13. "registrants" means rows in the participants table. Each row = one registration. Filter by race_name to scope to a particular race/year.
 
 RESPONSE FORMAT:
 Return ONLY the SQL query. No explanation, no markdown, no code fences. Just the raw SQL.

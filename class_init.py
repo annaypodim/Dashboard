@@ -55,6 +55,60 @@ def connect_db():
     return get_engine().connect()
 
 
+# All participant registrations live in a single table with a race_name column,
+# instead of one table per race. The race name is a *value* we filter on (bound
+# parameter), not a table identifier, which removes the SQL-injection surface that
+# per-race table names used to create.
+PARTICIPANT_TABLE = "participants"
+
+
+def load_race_participants(race_name: str) -> pd.DataFrame:
+    """Return all participant rows for one race from the participants table.
+
+    The race name is passed as a bound parameter (never interpolated as an
+    identifier), so it does not need table-name validation. The race_name column
+    is dropped from the result so callers see the same shape the old per-race
+    tables had.
+    """
+    conn = connect_db()
+    try:
+        df = pd.read_sql(
+            text(f'SELECT * FROM "{PARTICIPANT_TABLE}" WHERE race_name = :race'),
+            conn,
+            params={"race": race_name},
+        )
+    finally:
+        conn.close()
+    return df.drop(columns=["race_name"], errors="ignore")
+
+
+def append_new_participants(race_name: str, df: pd.DataFrame) -> int:
+    """Insert only rows whose 'Participant ID' is not already stored for this race.
+
+    Returns the number of rows actually inserted. Existing rows are never modified
+    (insert-only dedup keyed on Participant ID, scoped to the race).
+    """
+    existing = load_race_participants(race_name)
+    existing_ids = set(existing["Participant ID"]) if "Participant ID" in existing else set()
+
+    to_add = df.copy()
+    # Drop intra-CSV duplicate IDs defensively, then anything already stored.
+    to_add = to_add.drop_duplicates(subset=["Participant ID"])
+    to_add = to_add[~to_add["Participant ID"].isin(existing_ids)]
+    if to_add.empty:
+        return 0
+
+    to_add = to_add.copy()
+    to_add["race_name"] = race_name
+    conn = connect_db()
+    try:
+        to_add.to_sql(PARTICIPANT_TABLE, conn, if_exists="append", index=False)
+        conn.commit()
+    finally:
+        conn.close()
+    return len(to_add)
+
+
 def check_requirements_installed():
     if not os.path.exists(".env") and not os.path.exists("../.env"):
         st.error(".env file not found -- for this website to work, it must be copied over -- stopping website")
@@ -114,13 +168,7 @@ class Information:
             conn.close()
 
     def get_race_by_table_name(self, race_name: str) -> pd.DataFrame:
-        safe_name = _validate_table_name(race_name)
-        conn = connect_db()
-        try:
-            d = pd.read_sql(f'SELECT * FROM "{safe_name}"', conn)
-        finally:
-            conn.close()
-        return d
+        return load_race_participants(race_name)
 
         
 
@@ -131,11 +179,7 @@ class Race:
         self.start_date = start_date
         self.end_date = end_date
         self.race_name = _validate_table_name(race_name)
-        conn = connect_db()
-        try:
-            self.dataframe = pd.read_sql(f'SELECT * FROM "{self.race_name}"', conn)
-        finally:
-            conn.close()
+        self.dataframe = load_race_participants(self.race_name)
         # Convert date strings to date objects using vectorized pandas parsing
         # (much faster than row-by-row loop for large datasets)
         self.dataframe['Date'] = pd.to_datetime(self.dataframe['Date']).dt.date

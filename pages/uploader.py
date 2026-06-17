@@ -4,6 +4,7 @@ from datetime import datetime, date
 from class_init import (
     check_requirements_installed, authenticate_user, Information,
     get_races, connect_db, _validate_table_name, TABLE_NAME_PATTERN,
+    append_new_participants,
     load_all_finance, save_finance,
     FINANCE_INCOME_COLS, FINANCE_FIXED_COLS, FINANCE_VARIABLE_COLS, FINANCE_TOTAL_COLS,
 )
@@ -38,9 +39,35 @@ for i in reversed(range(len(races))):
 
 
 def _parse_csv_dates(df: pd.DataFrame) -> pd.DataFrame:
-    """Parse dates in uploaded CSV using vectorized pandas parsing."""
+    """Parse the registration date column from an uploaded CSV.
+
+    Registration exports include a timezone the way pandas cannot parse: a named
+    abbreviation like "2026-03-30 18:45:27 PDT". Passing that straight to
+    pd.to_datetime crashes hard (AttributeError deep in pandas), and even
+    errors='coerce' does not suppress it. So we first strip a trailing alphabetic
+    timezone token, then parse. format='mixed' also tolerates other inconsistent
+    formats (e.g. numeric offsets, ISO 'T'); any remaining timezone is dropped so
+    the result is naive datetime64 in local wall-clock time, matching how existing
+    races are stored.
+    """
     df = df.rename(columns={"Sub-event": "event", "Date Registered": "Date"})
-    df['Date'] = pd.to_datetime(df['Date'])
+    raw = df['Date'].astype(str).str.strip()
+    # Drop a trailing tz abbreviation (PDT/PST/EDT/UTC/...). We keep local
+    # wall-clock time, so dropping the label is correct, not lossy.
+    raw = raw.str.replace(r'\s+[A-Za-z]{2,5}$', '', regex=True)
+    parsed = pd.to_datetime(raw, format='mixed', errors='coerce')
+    parsed = parsed.map(
+        lambda ts: ts.replace(tzinfo=None)
+        if (ts is not pd.NaT and ts is not None and getattr(ts, 'tzinfo', None) is not None)
+        else ts
+    )
+    df['Date'] = pd.to_datetime(parsed)
+    n_bad = int(df['Date'].isna().sum())
+    if n_bad:
+        st.warning(
+            f"{n_bad} row(s) had an unrecognized registration date and were left "
+            "blank. Check the 'Date Registered' column in your CSV."
+        )
     return df
 
 
@@ -65,7 +92,11 @@ if uploaded_file is not None:
     df = _parse_csv_dates(df)
     st.write(df)
     uploaded = True
-    st.write(f"{len(df) - len(ogRace)} new rows to be added")
+    # New rows are those whose Participant ID is not already stored for this race
+    # (insert-only dedup), so preview the same count the write will actually add.
+    existing_ids = set(ogRace["Participant ID"]) if "Participant ID" in ogRace else set()
+    new_count = df.drop_duplicates(subset=["Participant ID"])["Participant ID"].isin(existing_ids).eq(False).sum()
+    st.write(f"{new_count} new rows to be added")
 
 submit = st.button("submit")
 
@@ -81,20 +112,28 @@ if submit and uploaded:
         uploaded_latest = pd.to_datetime(df['Date']).max()
         existing_latest = pd.to_datetime(ogRace['Date']).max()
         if uploaded_latest.date() >= existing_latest.date():
-            st.write("Data is okay to be written and is being written")
+            # Column-consistency check: the uploaded CSV must have the same columns
+            # as what's already stored for this race. If the race has no rows yet,
+            # there's nothing to compare against, so skip the check.
+            if not ogRace.empty and set(df.columns) != set(ogRace.columns):
+                missing = set(ogRace.columns) - set(df.columns)
+                extra = set(df.columns) - set(ogRace.columns)
+                st.error(
+                    "Uploaded columns do not match the existing data for this race "
+                    f"-- missing: {sorted(missing)}, unexpected: {sorted(extra)}. "
+                    "Nothing was written."
+                )
+            else:
+                st.write("Data is okay to be written and is being written")
 
-            # year_selector comes from radio buttons populated by existing race names,
-            # so it's already validated. But we validate again for defense-in-depth.
-            safe_name = _validate_table_name(year_selector)
-            conn = connect_db()
-            try:
-                df.to_sql(safe_name, conn, if_exists='replace', index=False)
-                conn.commit()
-                st.write("New data has been successfully uploaded")
-            except Exception as e:
-                st.error(f"Database write failed: {e}")
-            finally:
-                conn.close()
+                # year_selector comes from radio buttons populated by existing race
+                # names, so it's already validated; validate again defensively.
+                safe_name = _validate_table_name(year_selector)
+                try:
+                    added = append_new_participants(safe_name, df)
+                    st.write(f"{added} new rows added")
+                except Exception as e:
+                    st.error(f"Database write failed: {e}")
 
         else:
             st.error("This appears to be old data for this year and cannot be uploaded")
@@ -160,13 +199,18 @@ if create_new_race:
             new_info_df = pd.read_sql('SELECT * FROM info', conn)
             new_info_df.loc[len(new_info_df)] = [safe_name, new_df['Date'].loc[0].date(), end_date]
             new_info_df.to_sql("info", conn, index=False, if_exists='replace')
-            new_df.to_sql(safe_name, conn, index=False)
             conn.commit()
-            st.write("Database updated successfully")
         except Exception as e:
             st.error(f"Database write failed: {e}")
         finally:
             conn.close()
+        # Participant rows for the new race go into the shared participants table
+        # (stamped with race_name) instead of a dedicated per-race table.
+        try:
+            added = append_new_participants(safe_name, new_df)
+            st.write(f"Database updated successfully -- {added} rows added")
+        except Exception as e:
+            st.error(f"Database write failed: {e}")
 
 
 st.write("------------------------------------------------------")
