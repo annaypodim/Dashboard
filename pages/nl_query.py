@@ -7,7 +7,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from class_init import check_requirements_installed, authenticate_user, load_credentials
-from nl_query_engine import ask, get_db_schema
+from nl_query_engine import analyze, get_db_schema
 
 load_credentials()
 
@@ -95,7 +95,7 @@ if st.session_state.pop("input_submitted", False):
 
 if run_query and question:
     with st.spinner("Translating your question and querying the database..."):
-        result = ask(question, api_key, model)
+        result = analyze(question, api_key, model)
 
     # show generated sql
     if result["sql"]:
@@ -111,6 +111,24 @@ if run_query and question:
     if df.empty:
         st.warning("The query returned no results. Try rephrasing your question.")
         st.stop()
+
+    evidence = result["evidence"]
+    narrative = result["narrative"]
+
+    # Caveats render as their own warning rather than relying on the narrator to
+    # mention them -- a data-quality problem the reader misses is worse than a
+    # redundant one they see twice.
+    for caveat in evidence.caveats:
+        st.warning(caveat)
+
+    if narrative:
+        st.subheader('summary')
+        st.info(narrative["text"])
+        if narrative["guard_status"] == "fallback":
+            st.caption(
+                "The written summary was rejected for citing a number not in the data, "
+                "so this is the raw statistical finding instead."
+            )
 
     st.subheader('results')
 

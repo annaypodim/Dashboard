@@ -17,10 +17,15 @@ Why this approach?
 - No vector DB, no embeddings, no RAG pipeline — minimal dependencies
 """
 
+# Defers annotation evaluation, so the `str | None` hints below import cleanly
+# on Python 3.9 as well as 3.10+.
+from __future__ import annotations
+
 import re
 import pandas as pd
 from datetime import datetime
 from openai import OpenAI
+from sqlalchemy import text
 from class_init import connect_db, _validate_table_name
 
 
@@ -167,6 +172,7 @@ CROSS-YEAR COVERAGE:
 DATE ARITHMETIC:
 21. "N days before the race" means CUMULATIVE registrations whose "Date" is on or before (that race's Registration end date minus N days) — INCLUSIVE. It is a running total, not a single-day window. For race_2024 (end 2024-10-12), "3 days before the race" → `WHERE race_name = 'race_2024' AND "Date"::date <= DATE '2024-10-12' - INTERVAL '3 days'`. Use '<=', not '<' and not BETWEEN.
 22. When "days before the race" is asked across all years, apply rule 21 per year using each year's own Registration end date (from the info table / the values listed in "Race metadata" below), grouping on race_name per rule 10/11.
+23. "Age" is stored as TEXT, not a number. For any numeric aggregation on it (AVG, SUM, MIN, MAX, numeric comparison, ORDER BY as a number) you MUST cast it: use CAST("Age" AS INTEGER), e.g. `AVG(CAST("Age" AS INTEGER))`. Never call AVG("Age") directly — it errors with "function avg(text) does not exist".
 
 RESPONSE FORMAT:
 Return ONLY the SQL query. No explanation, no markdown, no code fences. Just the raw SQL.
@@ -272,7 +278,11 @@ def execute_query(sql: str) -> pd.DataFrame:
     """
     conn = connect_db()
     try:
-        df = pd.read_sql_query(sql, conn)
+        # Wrap in text() so a literal % (e.g. ILIKE '%Fido%') is passed through
+        # to Postgres verbatim. Handing pandas a bare string routes it through
+        # psycopg2's pyformat paramstyle, which reads % as a bind placeholder and
+        # fails with "immutabledict is not a sequence".
+        df = pd.read_sql_query(text(sql), conn)
         return df
     finally:
         conn.close()
@@ -444,3 +454,45 @@ def infer_chart_type(df: pd.DataFrame) -> str:
         return "bar"
 
     return "table"
+
+
+# ---------------------------------------------------------------------------
+# Narrated analysis. Wraps ask() rather than modifying it -- ask()'s five-key
+# return shape is what eval_runner and the existing pages depend on, so it stays
+# exactly as it is and this adds two keys on top.
+# ---------------------------------------------------------------------------
+
+def analyze(
+    question: str,
+    api_key: str,
+    model: str = "gpt-4o-mini",
+    provider: str = "openai",
+    narrate: bool = True,
+    narrator_model: str | None = None,
+) -> dict:
+    """ask(), plus a statistical verdict and a guarded prose summary.
+
+    Returns the ask() dict with two extra keys:
+    - evidence: an analysis.Evidence bundle (or None on error)
+    - narrative: dict with text/guard_status/violation (or None if narrate=False)
+
+    The narrator defaults to a stronger model than SQL generation: writing a
+    summary that resists inventing a trend is a harder task than emitting a SELECT.
+    """
+    from analysis import build_evidence
+    from narrator import narrate as narrate_evidence
+
+    if narrator_model is None:
+        narrator_model = "gemini-2.5-flash" if provider == "gemini" else "gpt-4o"
+
+    result = ask(question, api_key, model, provider)
+    if result["error"]:
+        return {**result, "evidence": None, "narrative": None}
+
+    evidence = build_evidence(question, result["sql"], result["data"])
+    narrative = (
+        narrate_evidence(evidence, api_key, narrator_model, provider)
+        if narrate
+        else None
+    )
+    return {**result, "evidence": evidence, "narrative": narrative}
