@@ -44,12 +44,19 @@ def _normalize_year_key(key):
 
 
 def _build_actual_map(df):
-    """Build a key->value map from first two columns, normalizing year keys."""
+    """Build a key->value map from the first and LAST columns, normalizing keys.
+
+    The label is column 0; the value is the last column, because the answer
+    metric is conventionally last (rules 11/25) and a query may legitimately
+    return component columns before it (e.g. total, female_count, then
+    female_percentage). For a plain 2-column result the last column IS column 1,
+    so this is a strict superset of the old behavior.
+    """
     if df.shape[1] < 2:
         return {}
     return {
         _normalize_year_key(str(k)): v
-        for k, v in zip(df.iloc[:, 0].astype(str), df.iloc[:, 1])
+        for k, v in zip(df.iloc[:, 0].astype(str), df.iloc[:, -1])
     }
 
 

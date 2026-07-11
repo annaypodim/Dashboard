@@ -131,37 +131,51 @@ GUARD_EVIDENCE = Evidence(
     caveats=(),
 )
 
+# The guard now takes an explicit allowed-number set rather than the bundle, so
+# it can also validate against the full result table and any run_sql follow-ups.
+# These tests still feed only the bundle-derived set, which is the tightest case.
+GUARD_ALLOWED = GUARD_EVIDENCE.allowed_numbers()
+
 
 def test_guard_rejects_fabricated_magnitude():
-    assert _numeric_guard("Registrations fell 23% this year.", GUARD_EVIDENCE) == "23"
+    assert _numeric_guard("Registrations fell 23% this year.", GUARD_ALLOWED) == "23"
 
 
 def test_guard_allows_rounded_share():
     """'about 47%' against a stored 46.87 must pass, or the narrator can't write prose."""
-    assert _numeric_guard("The split has held at about 47% female.", GUARD_EVIDENCE) is None
+    assert _numeric_guard("The split has held at about 47% female.", GUARD_ALLOWED) is None
 
 
 def test_guard_allows_shares_as_the_bundle_rounds_them():
     """The bundle shows 48.4 and 46.9, so those are what the narrator may write."""
-    assert _numeric_guard("48.4% in 2022 and 46.9% in 2025.", GUARD_EVIDENCE) is None
+    assert _numeric_guard("48.4% in 2022 and 46.9% in 2025.", GUARD_ALLOWED) is None
 
 
 def test_guard_allows_margin_of_error():
     """The bundle exposes 2*se as margin_of_error_pct: 3.4 and 2.9."""
-    assert _numeric_guard("The margin of error is 3.4 points.", GUARD_EVIDENCE) is None
+    assert _numeric_guard("The margin of error is 3.4 points.", GUARD_ALLOWED) is None
 
 
 def test_guard_allows_years_and_small_ints():
-    assert _numeric_guard("Across 5 years, from 2022 to 2026, nothing moved.", GUARD_EVIDENCE) is None
+    assert _numeric_guard("Across 5 years, from 2022 to 2026, nothing moved.", GUARD_ALLOWED) is None
 
 
 def test_guard_allows_counts_with_separators():
-    assert _numeric_guard("There were 1,165 registrants.", GUARD_EVIDENCE) is None
+    assert _numeric_guard("There were 1,165 registrants.", GUARD_ALLOWED) is None
 
 
 def test_guard_rejects_computed_difference():
     """1.48 is 48.35 - 46.87. Real numbers, arithmetic the model was told not to do."""
-    assert _numeric_guard("Female share dropped 1.48 points.", GUARD_EVIDENCE) == "1.48"
+    assert _numeric_guard("Female share dropped 1.48 points.", GUARD_ALLOWED) == "1.48"
+
+
+def test_df_numbers_backs_full_table_values():
+    """A value present in the result table passes even if it's not in the bundle."""
+    from narrator import _df_numbers
+    df = pd.DataFrame([("race_2022", 44755.00, 50.80)], columns=["race_name", "expense", "per_head"])
+    allowed = _df_numbers(df)
+    assert _numeric_guard("Each 2022 registrant cost $50.80.", allowed) is None
+    assert _numeric_guard("Each registrant cost $99.99.", allowed) == "99.99"
 
 
 def test_fallback_includes_detail_and_caveats():

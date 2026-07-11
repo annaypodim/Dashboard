@@ -416,17 +416,11 @@
         "decline",
         "declined",
         "decrease",
-        "drop",
         "dropped",
         "fell",
-        "rise",
-        "rose",
-        "grew",
-        "increase",
-        "recover",
-        "rebound",
-        "trend",
-        "shift"
+        "plummet",
+        "collapse",
+        "sharp drop"
       ],
       "required_terms": [
         "stable",

@@ -174,6 +174,19 @@ DATE ARITHMETIC:
 22. When "days before the race" is asked across all years, apply rule 21 per year using each year's own Registration end date (from the info table / the values listed in "Race metadata" below), grouping on race_name per rule 10/11.
 23. "Age" is stored as TEXT, not a number. For any numeric aggregation on it (AVG, SUM, MIN, MAX, numeric comparison, ORDER BY as a number) you MUST cast it: use CAST("Age" AS INTEGER), e.g. `AVG(CAST("Age" AS INTEGER))`. Never call AVG("Age") directly — it errors with "function avg(text) does not exist".
 
+FINANCE TABLE — read this before joining it:
+24. The 'finance' table has exactly ONE row per race (columns include race_name, "Race income", "Total income", "Total expense", "Net (all in)", and individual cost line items). finance.race_name matches participants.race_name. It covers race_2022–race_2025 only; there is NO race_2026 row. Because race_name exists in BOTH tables, ALWAYS table-qualify it everywhere it appears (SELECT, GROUP BY, ORDER BY, ON), e.g. finance.race_name — an unqualified race_name in a join errors with "column reference is ambiguous".
+25. NEVER join participants directly to finance and then SUM/AVG a finance column. finance has one row per race, so the join duplicates that row once per participant and inflates any finance total by the registrant count (a "fan-out"). To combine registrant counts with finance figures, first aggregate participants in a subquery, then join the one-row-per-race result to finance. Canonical pattern for "cost/income per registrant" or any per-race finance-vs-participation question:
+    SELECT f.race_name,
+           p.registrants,
+           f."Total expense",
+           ROUND((f."Total expense" / p.registrants)::numeric, 2) AS expense_per_registrant
+    FROM finance f
+    JOIN (SELECT race_name, COUNT(*) AS registrants FROM participants GROUP BY race_name) p
+      ON p.race_name = f.race_name
+    ORDER BY f.race_name;
+   The finance columns are already per-race totals — select them directly (f."Total expense"), never wrap them in SUM/AVG across the join.
+
 RESPONSE FORMAT:
 Return ONLY the SQL query. No explanation, no markdown, no code fences. Just the raw SQL.
 
@@ -500,7 +513,7 @@ def analyze(
 
     evidence = build_evidence(question, result["sql"], result["data"])
     narrative = (
-        narrate_evidence(evidence, api_key, narrator_model, provider)
+        narrate_evidence(evidence, api_key, narrator_model, provider, df=result["data"])
         if narrate
         else None
     )
