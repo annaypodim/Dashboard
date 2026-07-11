@@ -469,25 +469,34 @@ def analyze(
     provider: str = "openai",
     narrate: bool = True,
     narrator_model: str | None = None,
+    route: bool = True,
 ) -> dict:
-    """ask(), plus a statistical verdict and a guarded prose summary.
+    """ask(), plus intent routing, a statistical verdict, and a guarded summary.
 
-    Returns the ask() dict with two extra keys:
+    Returns the ask() dict with three extra keys:
+    - routing: dict with intent/method/caveat (or None if route=False)
     - evidence: an analysis.Evidence bundle (or None on error)
     - narrative: dict with text/guard_status/violation (or None if narrate=False)
+
+    Routing runs first and is independent of the query result: a causal question
+    ("did the price increase hurt signups?") still gets answered descriptively,
+    but routing["caveat"] warns that the numbers show what happened, not why.
 
     The narrator defaults to a stronger model than SQL generation: writing a
     summary that resists inventing a trend is a harder task than emitting a SELECT.
     """
     from analysis import build_evidence
     from narrator import narrate as narrate_evidence
+    from router import classify
 
     if narrator_model is None:
         narrator_model = "gemini-2.5-flash" if provider == "gemini" else "gpt-4o"
 
+    routing = classify(question, api_key, model, provider) if route else None
+
     result = ask(question, api_key, model, provider)
     if result["error"]:
-        return {**result, "evidence": None, "narrative": None}
+        return {**result, "routing": routing, "evidence": None, "narrative": None}
 
     evidence = build_evidence(question, result["sql"], result["data"])
     narrative = (
@@ -495,4 +504,4 @@ def analyze(
         if narrate
         else None
     )
-    return {**result, "evidence": evidence, "narrative": narrative}
+    return {**result, "routing": routing, "evidence": evidence, "narrative": narrative}

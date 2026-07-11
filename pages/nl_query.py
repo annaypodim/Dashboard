@@ -114,6 +114,13 @@ if run_query and question:
 
     evidence = result["evidence"]
     narrative = result["narrative"]
+    routing = result["routing"]
+
+    # A causal question ("why did X happen", "impact of price on signups") is
+    # answered descriptively but flagged up front, so the reader does not mistake
+    # a GROUP BY for evidence of cause. Shown before the summary deliberately.
+    if routing and routing["intent"] == "causal":
+        st.error(routing["caveat"])
 
     # Caveats render as their own warning rather than relying on the narrator to
     # mention them -- a data-quality problem the reader misses is worse than a
