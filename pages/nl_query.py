@@ -7,7 +7,12 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from class_init import check_requirements_installed, authenticate_user, load_credentials
-from nl_query_engine import analyze, get_db_schema
+from nl_query_engine import (
+    analyze,
+    get_db_schema,
+    is_report_question,
+    build_demographic_report,
+)
 
 load_credentials()
 
@@ -37,7 +42,14 @@ st.markdown(
          by prefix rather than an exact id. */
       [data-testid^="stChatMessageAvatar"],
       [class^="stChatMessageAvatar"] { display: none !important; }
-      [data-testid="stChatMessage"] { padding-left: 0 !important; gap: 0 !important; }
+      [data-testid="stChatMessage"] { gap: 0 !important; }
+      /* Give the message body some breathing room from the bubble's left edge.
+         Without this the question text sits flush against the border. */
+      [data-testid="stChatMessage"] [data-testid="stChatMessageContent"],
+      [data-testid="stChatMessage"] .stChatMessageContent {
+        padding-left: 0.9rem !important;
+        padding-right: 0.9rem !important;
+      }
     </style>
     """,
     unsafe_allow_html=True,
@@ -155,6 +167,15 @@ def render_response(result, turn_id):
         if string_cols and numeric_cols:
             fig = px.bar(df, x=string_cols[0], y=numeric_cols, barmode="group")
             _small_chart(fig, key=f"grouped_{turn_id}")
+            # A share view alongside the counts, so categories of very different
+            # sizes stay comparable.
+            share = df.copy()
+            totals = share[numeric_cols].sum(axis=1)
+            for c in numeric_cols:
+                share[c] = (share[c] / totals * 100).round(1)
+            fig_share = px.bar(share, x=string_cols[0], y=numeric_cols, barmode="stack")
+            fig_share.update_yaxes(title="% share")
+            _small_chart(fig_share, key=f"groupedshare_{turn_id}")
 
     elif chart_hint == "line":
         st.dataframe(df, use_container_width=True)
@@ -174,12 +195,72 @@ def render_response(result, turn_id):
     st.caption(f"{len(df)} rows returned")
 
 
+def _render_panel(panel, key):
+    """Chart one demographic-report panel according to its declared shape."""
+    df = panel["df"]
+    st.markdown(f"**{panel['title']}**")
+    if panel.get("note"):
+        st.caption(panel["note"])
+
+    if df is None or df.empty:
+        st.info("No data for this breakdown.")
+        return
+
+    numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
+    string_cols = df.select_dtypes(include=["object"]).columns.tolist()
+    chart = panel["chart"]
+
+    if chart == "trend" and numeric_cols and string_cols:
+        # one row per year: race_name (x) + a single value column.
+        fig = px.line(df, x=string_cols[0], y=numeric_cols[0], markers=True)
+        fig.update_xaxes(type="category")
+        _small_chart(fig, key=key)
+
+    elif chart in ("share", "grouped") and len(string_cols) >= 2 and numeric_cols:
+        # long form: year + category + count -> pivot to year x category.
+        year_col, cat_col, val_col = string_cols[0], string_cols[1], numeric_cols[0]
+        wide = df.pivot_table(index=year_col, columns=cat_col, values=val_col,
+                              aggfunc="sum", fill_value=0).reset_index()
+        cats = [c for c in wide.columns if c != year_col]
+        fig = px.bar(wide, x=year_col, y=cats, barmode="group")
+        _small_chart(fig, key=key + "_g")
+        if chart == "share":
+            pct = wide.copy()
+            totals = pct[cats].sum(axis=1)
+            for c in cats:
+                pct[c] = (pct[c] / totals * 100).round(1)
+            fig_pct = px.bar(pct, x=year_col, y=cats, barmode="stack")
+            fig_pct.update_yaxes(title="% share")
+            _small_chart(fig_pct, key=key + "_s")
+
+    elif chart == "bar" and numeric_cols and string_cols:
+        fig = px.bar(df, x=string_cols[0], y=numeric_cols[0])
+        _small_chart(fig, key=key)
+
+    with st.expander("data", expanded=False):
+        st.dataframe(df, use_container_width=True)
+
+
+def render_report(panels, turn_id):
+    """Render a multi-panel demographic report as a stack of charted sections."""
+    st.info(
+        "Here's a demographic profile of the registrants with every year side by "
+        "side. The most recent year is still in progress, so treat it as 'so far'."
+    )
+    for j, panel in enumerate(panels):
+        _render_panel(panel, key=f"report_{turn_id}_{j}")
+        st.divider()
+
+
 # replay the conversation so far
 for i, turn in enumerate(st.session_state["chat"]):
     with st.chat_message("user"):
         st.markdown(turn["question"])
     with st.chat_message("assistant"):
-        render_response(turn["result"], turn_id=i)
+        if turn.get("report") is not None:
+            render_report(turn["report"], turn_id=i)
+        else:
+            render_response(turn["result"], turn_id=i)
 
 # new question
 question = st.chat_input("Ask about the race data...")
@@ -187,7 +268,13 @@ if question:
     with st.chat_message("user"):
         st.markdown(question)
     with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            result = analyze(question, api_key, model)
-        render_response(result, turn_id=len(st.session_state["chat"]))
-    st.session_state["chat"].append({"question": question, "result": result})
+        if is_report_question(question):
+            with st.spinner("Building report..."):
+                panels = build_demographic_report(question)
+            render_report(panels, turn_id=len(st.session_state["chat"]))
+            st.session_state["chat"].append({"question": question, "report": panels})
+        else:
+            with st.spinner("Thinking..."):
+                result = analyze(question, api_key, model)
+            render_response(result, turn_id=len(st.session_state["chat"]))
+            st.session_state["chat"].append({"question": question, "result": result})

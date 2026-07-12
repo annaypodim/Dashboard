@@ -470,6 +470,148 @@ def infer_chart_type(df: pd.DataFrame) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Demographic report. A single SELECT can only return one shape, but a
+# "give me a report of the registrants and how they compare to past years"
+# question wants several breakdowns at once (headcount, sex, age, hometown).
+# Rather than lean on the LLM to somehow pack all of that into one query, we
+# run a fixed set of deterministic, safe breakdown queries and hand the page a
+# list of panels to chart. No LLM call — these are standard demographic cuts,
+# so hard-coding them is more reliable (and free) than generating them.
+# ---------------------------------------------------------------------------
+
+# Phrases that mean "show me a broad multi-dimensional profile", as opposed to a
+# single pointed metric. Kept deliberately narrow so ordinary questions ("how
+# many in 2024?") still take the normal single-query path.
+_REPORT_TRIGGERS = (
+    "report", "demographic", "demographics", "profile", "overview",
+    "breakdown of", "who are", "characteristics",
+)
+
+
+def is_report_question(question: str) -> bool:
+    """True when the question asks for a broad demographic profile rather than a
+    single metric. Also fires on 'compare ... (past) years' style phrasing."""
+    q = question.lower()
+    if any(t in q for t in _REPORT_TRIGGERS):
+        return True
+    # "how do they compare to past/previous/prior years"
+    if "compare" in q and any(w in q for w in ("year", "past", "previous", "prior")):
+        return True
+    return False
+
+
+def _run_breakdown(sql: str) -> pd.DataFrame:
+    """Execute one report sub-query and normalize text columns (e.g. City case
+    variants). Report SQL is fixed and trusted, so we skip validate_sql here."""
+    return normalize_result(execute_query(sql))
+
+
+def build_demographic_report(question: str) -> list[dict]:
+    """Return an ordered list of chartable panels profiling the registrants and
+    comparing them across every year present in the data (race_2026 included).
+
+    Each panel is {title, note, df, chart} where `chart` is one of:
+    'trend' (line over years), 'grouped' (grouped bar), 'share' (100%-stacked
+    composition), or 'bar' (ranked single series).
+    """
+    panels: list[dict] = []
+
+    # 1. Headcount by year — the top-line "how many, and is it growing".
+    panels.append({
+        "title": "Registrants by year",
+        "note": "Total registrations per race. The most recent year may be partial "
+                "(registration still open), so read it as 'so far'.",
+        "df": _run_breakdown(
+            "SELECT race_name, COUNT(*) AS registrants "
+            "FROM participants GROUP BY race_name ORDER BY race_name"
+        ),
+        "chart": "trend",
+    })
+
+    # 2. Sex composition by year — grouped counts plus a share view so a smaller
+    #    recent year is still comparable to larger past ones.
+    panels.append({
+        "title": "Sex breakdown by year",
+        "note": "M = male, F = female, N = non-binary, U = unknown. The share view "
+                "normalizes for differing year sizes.",
+        "df": _run_breakdown(
+            'SELECT race_name, "Sex", COUNT(*) AS n '
+            "FROM participants GROUP BY race_name, \"Sex\" "
+            'ORDER BY race_name, "Sex"'
+        ),
+        "chart": "share",
+    })
+
+    # 3. Average age by year — a single trend line reads far clearer than a table.
+    panels.append({
+        "title": "Average age by year",
+        "note": "Mean registrant age per race.",
+        "df": _run_breakdown(
+            "SELECT race_name, ROUND(AVG(CAST(\"Age\" AS INTEGER))::numeric, 1) AS avg_age "
+            "FROM participants WHERE \"Age\" ~ '^[0-9]+$' "
+            "GROUP BY race_name ORDER BY race_name"
+        ),
+        "chart": "trend",
+    })
+
+    # 4. Age-group composition by year — shows *how* the age mix shifts, not just
+    #    the mean (a stable average can hide a barbelling distribution).
+    panels.append({
+        "title": "Age groups by year",
+        "note": "Distribution across age bands, as a share of each year's registrants.",
+        "df": _run_breakdown(
+            "SELECT race_name, "
+            "CASE "
+            "  WHEN CAST(\"Age\" AS INTEGER) < 13 THEN '0-12' "
+            "  WHEN CAST(\"Age\" AS INTEGER) < 20 THEN '13-19' "
+            "  WHEN CAST(\"Age\" AS INTEGER) < 30 THEN '20-29' "
+            "  WHEN CAST(\"Age\" AS INTEGER) < 40 THEN '30-39' "
+            "  WHEN CAST(\"Age\" AS INTEGER) < 50 THEN '40-49' "
+            "  WHEN CAST(\"Age\" AS INTEGER) < 60 THEN '50-59' "
+            "  ELSE '60+' END AS age_group, "
+            "COUNT(*) AS n "
+            "FROM participants WHERE \"Age\" ~ '^[0-9]+$' "
+            "GROUP BY race_name, age_group ORDER BY race_name, age_group"
+        ),
+        "chart": "share",
+    })
+
+    # 5. Top hometowns overall — City is normalized so 'BELMONT'/'Belmont ' collapse.
+    panels.append({
+        "title": "Top hometowns (all years)",
+        "note": "Where registrants come from, across every year combined.",
+        "df": _run_breakdown(
+            'SELECT "City", COUNT(*) AS n '
+            "FROM participants WHERE \"City\" IS NOT NULL "
+            'GROUP BY "City" ORDER BY n DESC LIMIT 12'
+        ).head(12),
+        "chart": "bar",
+    })
+
+    # 6. Hometown mix by year — do the top origin cities hold their share over
+    #    time, or is the recent cohort drawn from somewhere new?
+    top_cities = panels[-1]["df"]["City"].head(6).tolist() if not panels[-1]["df"].empty else []
+    if top_cities:
+        placeholders = ", ".join("'" + c.replace("'", "''") + "'" for c in top_cities)
+        # Match on the normalized (title-cased, trimmed) city, mirroring the
+        # normalizer, so case/space variants in the raw column still count.
+        panels.append({
+            "title": "Top-city registrations by year",
+            "note": "Registrations from the overall top hometowns, split by year.",
+            "df": _run_breakdown(
+                'SELECT race_name, INITCAP(TRIM("City")) AS "City", COUNT(*) AS n '
+                "FROM participants "
+                f'WHERE INITCAP(TRIM("City")) IN ({placeholders}) '
+                'GROUP BY race_name, INITCAP(TRIM("City")) '
+                'ORDER BY race_name, "City"'
+            ),
+            "chart": "grouped",
+        })
+
+    return panels
+
+
+# ---------------------------------------------------------------------------
 # Narrated analysis. Wraps ask() rather than modifying it -- ask()'s five-key
 # return shape is what eval_runner and the existing pages depend on, so it stays
 # exactly as it is and this adds two keys on top.
