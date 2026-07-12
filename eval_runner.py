@@ -23,7 +23,7 @@ if os.path.exists(".env"):
 elif os.path.exists("../.env"):
     load_dotenv(dotenv_path="../.env")
 
-from nl_query_engine import ask
+from nl_query_engine import analyze, ask
 
 
 # Year labels: models may return "2022" or "race_2022" — both are valid
@@ -44,12 +44,19 @@ def _normalize_year_key(key):
 
 
 def _build_actual_map(df):
-    """Build a key->value map from first two columns, normalizing year keys."""
+    """Build a key->value map from the first and LAST columns, normalizing keys.
+
+    The label is column 0; the value is the last column, because the answer
+    metric is conventionally last (rules 11/25) and a query may legitimately
+    return component columns before it (e.g. total, female_count, then
+    female_percentage). For a plain 2-column result the last column IS column 1,
+    so this is a strict superset of the old behavior.
+    """
     if df.shape[1] < 2:
         return {}
     return {
         _normalize_year_key(str(k)): v
-        for k, v in zip(df.iloc[:, 0].astype(str), df.iloc[:, 1])
+        for k, v in zip(df.iloc[:, 0].astype(str), df.iloc[:, -1])
     }
 
 
@@ -205,7 +212,64 @@ def check_result(expected, result):
     return passed, "; ".join(checks)
 
 
-def run_eval(dataset_path="eval_dataset.json", ids=None, difficulty=None, provider="openai"):
+def check_narrative(expected, result):
+    """Check the narrated summary against an `expected_narrative` block.
+
+    Returns (passed, details). Checks any of:
+    - verdict: the statistical gate's ruling must match exactly
+    - forbidden_terms: words the prose must not contain (case-insensitive).
+      This is how we assert the model didn't narrate a trend through noise.
+    - required_terms: at least one must appear
+    - caveat_contains: a substring that must appear in some caveat
+    - guard_status: "clean" | "retried" | "fallback"
+    """
+    evidence = result.get("evidence")
+    narrative = result.get("narrative")
+    if evidence is None:
+        return False, "no evidence bundle"
+
+    checks = []
+    passed = True
+
+    if "verdict" in expected:
+        ok = evidence.verdict == expected["verdict"]
+        passed &= ok
+        checks.append(f"verdict={evidence.verdict} (want {expected['verdict']}): {'ok' if ok else 'MISMATCH'}")
+
+    if "caveat_contains" in expected:
+        ok = any(expected["caveat_contains"] in c for c in evidence.caveats)
+        passed &= ok
+        checks.append(f"caveat contains '{expected['caveat_contains']}': {'ok' if ok else 'MISSING'}")
+
+    if narrative is None:
+        if any(k in expected for k in ("forbidden_terms", "required_terms", "guard_status")):
+            return False, "; ".join(checks + ["no narrative (run with --narrate)"])
+        return passed, "; ".join(checks)
+
+    text = narrative["text"].lower()
+
+    if "forbidden_terms" in expected:
+        hits = [t for t in expected["forbidden_terms"] if t.lower() in text]
+        passed &= not hits
+        checks.append(f"forbidden terms: {'none' if not hits else 'FOUND ' + str(hits)}")
+
+    if "required_terms" in expected:
+        hits = [t for t in expected["required_terms"] if t.lower() in text]
+        passed &= bool(hits)
+        checks.append(f"required terms: {'ok ' + str(hits) if hits else 'NONE FOUND'}")
+
+    if "guard_status" in expected:
+        ok = narrative["guard_status"] == expected["guard_status"]
+        passed &= ok
+        checks.append(f"guard={narrative['guard_status']} (want {expected['guard_status']}): {'ok' if ok else 'MISMATCH'}")
+
+    if narrative["violation"]:
+        checks.append(f"guard caught: {narrative['violation']}")
+
+    return passed, "; ".join(checks)
+
+
+def run_eval(dataset_path="eval_dataset.json", ids=None, difficulty=None, provider="openai", narrate=False):
     if provider == "gemini":
         api_key = os.environ.get("GEMINI_API_KEY", "")
         if not api_key:
@@ -242,7 +306,10 @@ def run_eval(dataset_path="eval_dataset.json", ids=None, difficulty=None, provid
         print(f"\n[Q{qid}] {question}")
         print(f"  difficulty: {case['difficulty']}  category: {case['category']}")
 
-        result = ask(question, api_key, model=model, provider=provider)
+        if narrate:
+            result = analyze(question, api_key, model=model, provider=provider)
+        else:
+            result = ask(question, api_key, model=model, provider=provider)
 
         # respect rate limits for free tier
         if provider == "gemini":
@@ -260,7 +327,17 @@ def run_eval(dataset_path="eval_dataset.json", ids=None, difficulty=None, provid
             if not sql_ok:
                 print(f"  SQL pattern '{case['expected_sql_pattern']}' NOT matched")
 
-        overall = passed and sql_ok
+        # Narration checks only when the narrator actually ran -- without
+        # --narrate there is no evidence bundle, and a case shouldn't fail for
+        # a summary nobody asked to generate.
+        narrative_ok = True
+        if narrate and case.get("expected_narrative"):
+            narrative_ok, narrative_details = check_narrative(case["expected_narrative"], result)
+            details = f"{details} | narrative: {narrative_details}"
+            if result.get("narrative"):
+                print(f"  SUMMARY: {result['narrative']['text']}")
+
+        overall = passed and sql_ok and narrative_ok
         status = "PASS" if overall else "FAIL"
         print(f"  {status}: {details}")
 
@@ -299,5 +376,10 @@ if __name__ == "__main__":
     parser.add_argument("--ids", nargs="+", type=int, help="Run specific case IDs")
     parser.add_argument("--difficulty", choices=["easy", "medium", "hard"])
     parser.add_argument("--provider", choices=["openai", "gemini"], default="openai")
+    parser.add_argument(
+        "--narrate",
+        action="store_true",
+        help="Also generate and check the prose summary (costs an extra LLM call per case)",
+    )
     args = parser.parse_args()
-    run_eval(ids=args.ids, difficulty=args.difficulty, provider=args.provider)
+    run_eval(ids=args.ids, difficulty=args.difficulty, provider=args.provider, narrate=args.narrate)

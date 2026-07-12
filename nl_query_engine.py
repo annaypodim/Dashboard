@@ -17,10 +17,15 @@ Why this approach?
 - No vector DB, no embeddings, no RAG pipeline — minimal dependencies
 """
 
+# Defers annotation evaluation, so the `str | None` hints below import cleanly
+# on Python 3.9 as well as 3.10+.
+from __future__ import annotations
+
 import re
 import pandas as pd
 from datetime import datetime
 from openai import OpenAI
+from sqlalchemy import text
 from class_init import connect_db, _validate_table_name
 
 
@@ -167,6 +172,20 @@ CROSS-YEAR COVERAGE:
 DATE ARITHMETIC:
 21. "N days before the race" means CUMULATIVE registrations whose "Date" is on or before (that race's Registration end date minus N days) — INCLUSIVE. It is a running total, not a single-day window. For race_2024 (end 2024-10-12), "3 days before the race" → `WHERE race_name = 'race_2024' AND "Date"::date <= DATE '2024-10-12' - INTERVAL '3 days'`. Use '<=', not '<' and not BETWEEN.
 22. When "days before the race" is asked across all years, apply rule 21 per year using each year's own Registration end date (from the info table / the values listed in "Race metadata" below), grouping on race_name per rule 10/11.
+23. "Age" is stored as TEXT, not a number. For any numeric aggregation on it (AVG, SUM, MIN, MAX, numeric comparison, ORDER BY as a number) you MUST cast it: use CAST("Age" AS INTEGER), e.g. `AVG(CAST("Age" AS INTEGER))`. Never call AVG("Age") directly — it errors with "function avg(text) does not exist".
+
+FINANCE TABLE — read this before joining it:
+24. The 'finance' table has exactly ONE row per race (columns include race_name, "Race income", "Total income", "Total expense", "Net (all in)", and individual cost line items). finance.race_name matches participants.race_name. It covers race_2022–race_2025 only; there is NO race_2026 row. Because race_name exists in BOTH tables, ALWAYS table-qualify it everywhere it appears (SELECT, GROUP BY, ORDER BY, ON), e.g. finance.race_name — an unqualified race_name in a join errors with "column reference is ambiguous".
+25. NEVER join participants directly to finance and then SUM/AVG a finance column. finance has one row per race, so the join duplicates that row once per participant and inflates any finance total by the registrant count (a "fan-out"). To combine registrant counts with finance figures, first aggregate participants in a subquery, then join the one-row-per-race result to finance. Canonical pattern for "cost/income per registrant" or any per-race finance-vs-participation question:
+    SELECT f.race_name,
+           p.registrants,
+           f."Total expense",
+           ROUND((f."Total expense" / p.registrants)::numeric, 2) AS expense_per_registrant
+    FROM finance f
+    JOIN (SELECT race_name, COUNT(*) AS registrants FROM participants GROUP BY race_name) p
+      ON p.race_name = f.race_name
+    ORDER BY f.race_name;
+   The finance columns are already per-race totals — select them directly (f."Total expense"), never wrap them in SUM/AVG across the join.
 
 RESPONSE FORMAT:
 Return ONLY the SQL query. No explanation, no markdown, no code fences. Just the raw SQL.
@@ -272,7 +291,11 @@ def execute_query(sql: str) -> pd.DataFrame:
     """
     conn = connect_db()
     try:
-        df = pd.read_sql_query(sql, conn)
+        # Wrap in text() so a literal % (e.g. ILIKE '%Fido%') is passed through
+        # to Postgres verbatim. Handing pandas a bare string routes it through
+        # psycopg2's pyformat paramstyle, which reads % as a bind placeholder and
+        # fails with "immutabledict is not a sequence".
+        df = pd.read_sql_query(text(sql), conn)
         return df
     finally:
         conn.close()
@@ -444,3 +467,196 @@ def infer_chart_type(df: pd.DataFrame) -> str:
         return "bar"
 
     return "table"
+
+
+# ---------------------------------------------------------------------------
+# Demographic report. A single SELECT can only return one shape, but a
+# "give me a report of the registrants and how they compare to past years"
+# question wants several breakdowns at once (headcount, sex, age, hometown).
+# Rather than lean on the LLM to somehow pack all of that into one query, we
+# run a fixed set of deterministic, safe breakdown queries and hand the page a
+# list of panels to chart. No LLM call — these are standard demographic cuts,
+# so hard-coding them is more reliable (and free) than generating them.
+# ---------------------------------------------------------------------------
+
+# Phrases that mean "show me a broad multi-dimensional profile", as opposed to a
+# single pointed metric. Kept deliberately narrow so ordinary questions ("how
+# many in 2024?") still take the normal single-query path.
+_REPORT_TRIGGERS = (
+    "report", "demographic", "demographics", "profile", "overview",
+    "breakdown of", "who are", "characteristics",
+)
+
+
+def is_report_question(question: str) -> bool:
+    """True when the question asks for a broad demographic profile rather than a
+    single metric. Also fires on 'compare ... (past) years' style phrasing."""
+    q = question.lower()
+    if any(t in q for t in _REPORT_TRIGGERS):
+        return True
+    # "how do they compare to past/previous/prior years"
+    if "compare" in q and any(w in q for w in ("year", "past", "previous", "prior")):
+        return True
+    return False
+
+
+def _run_breakdown(sql: str) -> pd.DataFrame:
+    """Execute one report sub-query and normalize text columns (e.g. City case
+    variants). Report SQL is fixed and trusted, so we skip validate_sql here."""
+    return normalize_result(execute_query(sql))
+
+
+def build_demographic_report(question: str) -> list[dict]:
+    """Return an ordered list of chartable panels profiling the registrants and
+    comparing them across every year present in the data (race_2026 included).
+
+    Each panel is {title, note, df, chart} where `chart` is one of:
+    'trend' (line over years), 'grouped' (grouped bar), 'share' (100%-stacked
+    composition), or 'bar' (ranked single series).
+    """
+    panels: list[dict] = []
+
+    # 1. Headcount by year — the top-line "how many, and is it growing".
+    panels.append({
+        "title": "Registrants by year",
+        "note": "Total registrations per race. The most recent year may be partial "
+                "(registration still open), so read it as 'so far'.",
+        "df": _run_breakdown(
+            "SELECT race_name, COUNT(*) AS registrants "
+            "FROM participants GROUP BY race_name ORDER BY race_name"
+        ),
+        "chart": "trend",
+    })
+
+    # 2. Sex composition by year — grouped counts plus a share view so a smaller
+    #    recent year is still comparable to larger past ones.
+    panels.append({
+        "title": "Sex breakdown by year",
+        "note": "M = male, F = female, N = non-binary, U = unknown. The share view "
+                "normalizes for differing year sizes.",
+        "df": _run_breakdown(
+            'SELECT race_name, "Sex", COUNT(*) AS n '
+            "FROM participants GROUP BY race_name, \"Sex\" "
+            'ORDER BY race_name, "Sex"'
+        ),
+        "chart": "share",
+    })
+
+    # 3. Average age by year — a single trend line reads far clearer than a table.
+    panels.append({
+        "title": "Average age by year",
+        "note": "Mean registrant age per race.",
+        "df": _run_breakdown(
+            "SELECT race_name, ROUND(AVG(CAST(\"Age\" AS INTEGER))::numeric, 1) AS avg_age "
+            "FROM participants WHERE \"Age\" ~ '^[0-9]+$' "
+            "GROUP BY race_name ORDER BY race_name"
+        ),
+        "chart": "trend",
+    })
+
+    # 4. Age-group composition by year — shows *how* the age mix shifts, not just
+    #    the mean (a stable average can hide a barbelling distribution).
+    panels.append({
+        "title": "Age groups by year",
+        "note": "Distribution across age bands, as a share of each year's registrants.",
+        "df": _run_breakdown(
+            "SELECT race_name, "
+            "CASE "
+            "  WHEN CAST(\"Age\" AS INTEGER) < 13 THEN '0-12' "
+            "  WHEN CAST(\"Age\" AS INTEGER) < 20 THEN '13-19' "
+            "  WHEN CAST(\"Age\" AS INTEGER) < 30 THEN '20-29' "
+            "  WHEN CAST(\"Age\" AS INTEGER) < 40 THEN '30-39' "
+            "  WHEN CAST(\"Age\" AS INTEGER) < 50 THEN '40-49' "
+            "  WHEN CAST(\"Age\" AS INTEGER) < 60 THEN '50-59' "
+            "  ELSE '60+' END AS age_group, "
+            "COUNT(*) AS n "
+            "FROM participants WHERE \"Age\" ~ '^[0-9]+$' "
+            "GROUP BY race_name, age_group ORDER BY race_name, age_group"
+        ),
+        "chart": "share",
+    })
+
+    # 5. Top hometowns overall — City is normalized so 'BELMONT'/'Belmont ' collapse.
+    panels.append({
+        "title": "Top hometowns (all years)",
+        "note": "Where registrants come from, across every year combined.",
+        "df": _run_breakdown(
+            'SELECT "City", COUNT(*) AS n '
+            "FROM participants WHERE \"City\" IS NOT NULL "
+            'GROUP BY "City" ORDER BY n DESC LIMIT 12'
+        ).head(12),
+        "chart": "bar",
+    })
+
+    # 6. Hometown mix by year — do the top origin cities hold their share over
+    #    time, or is the recent cohort drawn from somewhere new?
+    top_cities = panels[-1]["df"]["City"].head(6).tolist() if not panels[-1]["df"].empty else []
+    if top_cities:
+        placeholders = ", ".join("'" + c.replace("'", "''") + "'" for c in top_cities)
+        # Match on the normalized (title-cased, trimmed) city, mirroring the
+        # normalizer, so case/space variants in the raw column still count.
+        panels.append({
+            "title": "Top-city registrations by year",
+            "note": "Registrations from the overall top hometowns, split by year.",
+            "df": _run_breakdown(
+                'SELECT race_name, INITCAP(TRIM("City")) AS "City", COUNT(*) AS n '
+                "FROM participants "
+                f'WHERE INITCAP(TRIM("City")) IN ({placeholders}) '
+                'GROUP BY race_name, INITCAP(TRIM("City")) '
+                'ORDER BY race_name, "City"'
+            ),
+            "chart": "grouped",
+        })
+
+    return panels
+
+
+# ---------------------------------------------------------------------------
+# Narrated analysis. Wraps ask() rather than modifying it -- ask()'s five-key
+# return shape is what eval_runner and the existing pages depend on, so it stays
+# exactly as it is and this adds two keys on top.
+# ---------------------------------------------------------------------------
+
+def analyze(
+    question: str,
+    api_key: str,
+    model: str = "gpt-4o-mini",
+    provider: str = "openai",
+    narrate: bool = True,
+    narrator_model: str | None = None,
+    route: bool = True,
+) -> dict:
+    """ask(), plus intent routing, a statistical verdict, and a guarded summary.
+
+    Returns the ask() dict with three extra keys:
+    - routing: dict with intent/method/caveat (or None if route=False)
+    - evidence: an analysis.Evidence bundle (or None on error)
+    - narrative: dict with text/guard_status/violation (or None if narrate=False)
+
+    Routing runs first and is independent of the query result: a causal question
+    ("did the price increase hurt signups?") still gets answered descriptively,
+    but routing["caveat"] warns that the numbers show what happened, not why.
+
+    The narrator defaults to a stronger model than SQL generation: writing a
+    summary that resists inventing a trend is a harder task than emitting a SELECT.
+    """
+    from analysis import build_evidence
+    from narrator import narrate as narrate_evidence
+    from router import classify
+
+    if narrator_model is None:
+        narrator_model = "gemini-2.5-flash" if provider == "gemini" else "gpt-4o"
+
+    routing = classify(question, api_key, model, provider) if route else None
+
+    result = ask(question, api_key, model, provider)
+    if result["error"]:
+        return {**result, "routing": routing, "evidence": None, "narrative": None}
+
+    evidence = build_evidence(question, result["sql"], result["data"])
+    narrative = (
+        narrate_evidence(evidence, api_key, narrator_model, provider, df=result["data"])
+        if narrate
+        else None
+    )
+    return {**result, "routing": routing, "evidence": evidence, "narrative": narrative}
