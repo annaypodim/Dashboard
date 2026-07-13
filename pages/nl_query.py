@@ -128,7 +128,7 @@ def render_response(result, turn_id):
     # answered descriptively but flagged up front, so the reader does not mistake
     # a GROUP BY for evidence of cause.
     if routing and routing["intent"] == "causal":
-        st.error(routing["caveat"])
+        st.info(routing["caveat"])
 
     for caveat in evidence.caveats:
         st.warning(caveat)

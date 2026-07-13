@@ -482,22 +482,30 @@ def infer_chart_type(df: pd.DataFrame) -> str:
 # Phrases that mean "show me a broad multi-dimensional profile", as opposed to a
 # single pointed metric. Kept deliberately narrow so ordinary questions ("how
 # many in 2024?") still take the normal single-query path.
+# The canned multi-panel demographic report is a fixed set of six charts that
+# ignore the specifics of the question. It should therefore only fire when the
+# user is unambiguously asking for that broad profile -- never on a specific
+# analytical question that happens to contain a word like "report". So the
+# triggers are whole *phrases* that only occur when someone wants the overview,
+# not bare words ("report", "overview", "profile") that appear in ordinary
+# questions like "write up a report on this correlation". Everything else flows
+# to analyze(), which writes real SQL and lets the narrator interpret.
 _REPORT_TRIGGERS = (
-    "report", "demographic", "demographics", "profile", "overview",
-    "breakdown of", "who are", "characteristics",
+    "demographic report", "demographics report", "demographic profile",
+    "demographic breakdown", "demographic overview", "demographic snapshot",
+    "profile of the registrants", "profile of registrants",
+    "overview of the registrants", "overview of registrants",
+    "who are the registrants", "who are our registrants",
+    "registrant profile", "registrant demographics",
 )
 
 
 def is_report_question(question: str) -> bool:
-    """True when the question asks for a broad demographic profile rather than a
-    single metric. Also fires on 'compare ... (past) years' style phrasing."""
+    """True only when the question unambiguously asks for the broad, canned
+    demographic profile -- a whole-phrase match, so specific questions that
+    merely contain a word like 'report' are not hijacked."""
     q = question.lower()
-    if any(t in q for t in _REPORT_TRIGGERS):
-        return True
-    # "how do they compare to past/previous/prior years"
-    if "compare" in q and any(w in q for w in ("year", "past", "previous", "prior")):
-        return True
-    return False
+    return any(t in q for t in _REPORT_TRIGGERS)
 
 
 def _run_breakdown(sql: str) -> pd.DataFrame:
