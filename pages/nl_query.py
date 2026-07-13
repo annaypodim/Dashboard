@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -101,7 +102,61 @@ def _small_chart(fig, key):
         st.plotly_chart(fig, use_container_width=True, key=key)
 
 
-def render_response(result, turn_id):
+# Dates the user names in the question (e.g. "price increased on 5/11 and 7/6")
+# get drawn on any time-series chart as labelled vertical lines, so a question
+# like "is there a correlated increase in registrations around these dates" is
+# answered visually as well as in prose. Matches M/D, M/D/YY, and M/D/YYYY.
+_DATE_RE = re.compile(r"\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b")
+
+
+def _reference_dates(question):
+    """Return [(month, day, year_or_None, label)] for dates named in the question."""
+    out = []
+    for m, d, y in _DATE_RE.findall(question or ""):
+        month, day = int(m), int(d)
+        if not (1 <= month <= 12 and 1 <= day <= 31):
+            continue
+        year = None
+        if y:
+            year = int(y) + 2000 if len(y) == 2 else int(y)
+        out.append((month, day, year, f"{month}/{day}"))
+    return out
+
+
+def _looks_like_dates(series):
+    """True if the column parses as real dates (a genuine time axis, not year labels)."""
+    parsed = pd.to_datetime(series, errors="coerce")
+    return parsed.notna().mean() >= 0.8 and parsed.dt.normalize().nunique() > 1
+
+
+def _add_date_markers(fig, x_series, question):
+    """Draw a vertical line + label for each date named in the question.
+
+    A bare M/D (no year) is placed in every year the data spans, so the marker
+    lands on the chart regardless of which season the registrations are from.
+    """
+    refs = _reference_dates(question)
+    if not refs:
+        return
+    parsed = pd.to_datetime(x_series, errors="coerce").dropna()
+    if parsed.empty:
+        return
+    years = sorted(parsed.dt.year.unique())
+    for month, day, year, label in refs:
+        for yr in ([year] if year else years):
+            try:
+                stamp = pd.Timestamp(year=yr, month=month, day=day)
+            except ValueError:
+                continue
+            if not (parsed.min() <= stamp <= parsed.max()):
+                continue
+            fig.add_vline(
+                x=stamp, line_dash="dash", line_color="#c0392b",
+                annotation_text=label, annotation_position="top",
+            )
+
+
+def render_response(result, turn_id, question=""):
     """Render one assistant turn from an analyze() result dict.
 
     `turn_id` makes plotly chart keys unique -- the same figure is re-rendered on
@@ -182,15 +237,34 @@ def render_response(result, turn_id):
         numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
         non_numeric = [c for c in df.columns if c not in numeric_cols]
         if non_numeric and numeric_cols:
-            fig = px.line(df, x=non_numeric[0], y=numeric_cols, markers=True)
-            fig.update_xaxes(type="category")
+            xcol = non_numeric[0]
+            if _looks_like_dates(df[xcol]):
+                # A real time axis: keep it continuous and drop in the
+                # user's reference dates (e.g. price-increase dates) as markers.
+                d = df.copy()
+                d[xcol] = pd.to_datetime(d[xcol], errors="coerce")
+                fig = px.line(d, x=xcol, y=numeric_cols, markers=True)
+                _add_date_markers(fig, d[xcol], question)
+            else:
+                fig = px.line(df, x=xcol, y=numeric_cols, markers=True)
+                fig.update_xaxes(type="category")
             _small_chart(fig, key=f"line_{turn_id}")
         elif len(numeric_cols) >= 2:
             fig = px.line(df, x=numeric_cols[0], y=numeric_cols[1:], markers=True)
             _small_chart(fig, key=f"linexy_{turn_id}")
 
     else:
+        # Fallback: still give a graph with every answer whenever the shape
+        # allows one, rather than dropping to a bare table.
         st.dataframe(df, use_container_width=True)
+        numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
+        string_cols = df.select_dtypes(include=["object"]).columns.tolist()
+        if string_cols and numeric_cols:
+            fig = px.bar(df, x=string_cols[0], y=numeric_cols[0])
+            _small_chart(fig, key=f"fallback_{turn_id}")
+        elif len(numeric_cols) >= 2:
+            fig = px.line(df, x=numeric_cols[0], y=numeric_cols[1:], markers=True)
+            _small_chart(fig, key=f"fallbackxy_{turn_id}")
 
     st.caption(f"{len(df)} rows returned")
 
@@ -260,7 +334,7 @@ for i, turn in enumerate(st.session_state["chat"]):
         if turn.get("report") is not None:
             render_report(turn["report"], turn_id=i)
         else:
-            render_response(turn["result"], turn_id=i)
+            render_response(turn["result"], turn_id=i, question=turn["question"])
 
 # new question
 question = st.chat_input("Ask about the race data...")
@@ -276,5 +350,5 @@ if question:
         else:
             with st.spinner("Thinking..."):
                 result = analyze(question, api_key, model)
-            render_response(result, turn_id=len(st.session_state["chat"]))
+            render_response(result, turn_id=len(st.session_state["chat"]), question=question)
             st.session_state["chat"].append({"question": question, "result": result})
