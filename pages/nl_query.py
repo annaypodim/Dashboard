@@ -150,9 +150,12 @@ def _add_date_markers(fig, x_series, question):
                 continue
             if not (parsed.min() <= stamp <= parsed.max()):
                 continue
-            fig.add_vline(
-                x=stamp, line_dash="dash", line_color="#c0392b",
-                annotation_text=label, annotation_position="top",
+            # Draw the line and label separately: add_vline's own annotation
+            # averages the x-coords, which errors on pandas Timestamps.
+            fig.add_vline(x=stamp, line_dash="dash", line_color="#c0392b")
+            fig.add_annotation(
+                x=stamp, yref="paper", y=1.0, text=label,
+                showarrow=False, font=dict(color="#c0392b", size=11),
             )
 
 
