@@ -118,16 +118,15 @@ def _client(api_key: str, provider: str) -> OpenAI:
 def _causal_caveat(question: str) -> str:
     """The banner text shown when a question is judged causal."""
     base = (
-        "This looks like a cause-and-effect question. The numbers below are "
-        "descriptive -- they show what happened, not why. A single query cannot "
-        "separate a real effect from coincidence or from other things changing at "
-        "the same time, so do not read the figures below as proof that one thing "
-        "caused another."
+        "Heads up: this is a cause-and-effect question, so read the analysis below "
+        "as descriptive -- it shows what the registration numbers did around the "
+        "dates in question, not proof that one thing caused another. Other things "
+        "may have changed at the same time."
     )
     if _PRICE_RE.search(question):
         base += (
-            " There is also no price information in this database, so any question "
-            "about the effect of price cannot be answered from this data at all."
+            " Note that the database has no price field, so the analysis works from "
+            "any dates you provide rather than from price data itself."
         )
     return base
 
