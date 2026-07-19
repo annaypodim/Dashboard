@@ -62,7 +62,9 @@ actual_registrants       = len(df)
 race_income_per_reg      = fin["Total income less sponsorship"] / actual_registrants
 var_per_reg              = fin["Total Variable expense"] / actual_registrants
 contribution_margin      = race_income_per_reg - var_per_reg
-breakeven_regs           = (fin["Total Fixed expense"] / contribution_margin
+breakeven_sp           = ((fin["Total Fixed expense"]-fin["Sponsorship"]-fin["Donations"]) / contribution_margin
+                            if contribution_margin > 0 else float("inf"))
+breakeven_nosp           = (fin["Total Fixed expense"] / contribution_margin
                             if contribution_margin > 0 else float("inf"))
 
 # ── summary cards ─────────────────────────────────────────────────────────────
@@ -78,7 +80,7 @@ col5, col6, col7, col8 = st.columns(4)
 col5.metric("Race Income / Registrant",   f"${race_income_per_reg:,.2f}")
 col6.metric("Variable Cost / Reg",        f"${var_per_reg:,.2f}")
 col7.metric("Contribution Margin / Reg",  f"${contribution_margin:,.2f}")
-col8.metric("Breakeven Registrants",      f"{breakeven_regs:,.0f}")
+col8.metric("Breakeven Registrants",      f"{breakeven_sp:,.0f}")
 
 # ── full breakdown ────────────────────────────────────────────────────────────
 with st.expander("View Full Financial Breakdown"):
@@ -203,13 +205,13 @@ c2.metric("Total Income",   f"${proj_total_income:,.0f}",   delta=f"${delta_inco
 c3.metric("Total Expenses", f"${proj_total_expense:,.0f}",  delta=f"${delta_expense:+,.0f}", delta_color="inverse")
 c4.metric("Net (all in)",   f"${proj_net_all_in:,.0f}",    delta=f"${delta_net:+,.0f}")
 
-above_be = projected_regs >= breakeven_regs
+above_be = projected_regs >= breakeven_sp
 c5, c6 = st.columns(2)
 c5.metric("Net (w/o Sponsorship)", f"${proj_net_no_spon:,.0f}")
 c6.metric(
     "Breakeven Status",
     "✅ Profitable" if proj_net_all_in > 0 else "❌ Loss",
-    delta=f"{'Above' if above_be else 'Below'} breakeven by {abs(projected_regs - breakeven_regs):,.0f} regs",
+    delta=f"{'Above' if above_be else 'Below'} breakeven by {abs(projected_regs - breakeven_sp):,.0f} regs",
     delta_color="normal" if above_be else "inverse",
 )
 
@@ -236,20 +238,23 @@ st.plotly_chart(fig_comp, use_container_width=True)
 # ── breakeven curve ───────────────────────────────────────────────────────────
 st.subheader("Breakeven Curve")
 
-max_x     = max(actual_registrants, projected_regs, int(breakeven_regs) + 50) + 100
-reg_range = list(range(0, max_x + 1, 10))
+max_x     = max(actual_registrants, projected_regs, int(breakeven_sp) + 50) + 100
+reg_range = list(range(0, max_x + 1, 5))
 rev_curve = [race_income_per_reg * r + fin["Sponsorship"] + fin["Donations"] for r in reg_range]
+nosp_curve = [race_income_per_reg * r for r in reg_range]
 exp_curve = [fin["Total Fixed expense"] + var_per_reg * r for r in reg_range]
 
 fig_be = go.Figure()
 fig_be.add_trace(go.Scatter(x=reg_range, y=rev_curve, name="Total Income",   line=dict(color="#4f8ef7")))
 fig_be.add_trace(go.Scatter(x=reg_range, y=exp_curve, name="Total Expenses", line=dict(color="#e85c5c")))
+fig_be.add_trace(go.Scatter(x=reg_range, y=nosp_curve, name="No Sponsorship", line=dict(color="#5cbf7a")))
 
 # stagger annotation y-positions (as paper fractions) so labels never overlap
 # even when the three lines are close together
 vlines = [
-    dict(x=breakeven_regs,     color="orange",  dash="dash", label=f"Breakeven ({breakeven_regs:,.0f})",     y_frac=0.95),
+    dict(x=breakeven_sp,     color="orange",  dash="dash", label=f"Sponsorship ({breakeven_sp:,.0f})",     y_frac=0.95),
     dict(x=actual_registrants, color="#4f8ef7", dash="dot",  label=f"Actual ({actual_registrants:,})",       y_frac=0.82),
+    dict(x=breakeven_nosp, color="#4f8ef7", dash="dash",  label=f"No Sponsorship ({breakeven_nosp:,.0f})",       y_frac=0.95),
 ]
 if projected_regs != actual_registrants:
     vlines.append(
