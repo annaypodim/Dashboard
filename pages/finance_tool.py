@@ -66,7 +66,8 @@ breakeven_sp           = ((fin["Total Fixed expense"]-fin["Sponsorship"]-fin["Do
                             if contribution_margin > 0 else float("inf"))
 breakeven_nosp           = (fin["Total Fixed expense"] / contribution_margin
                             if contribution_margin > 0 else float("inf"))
-
+if(breakeven_sp<0):
+    breakeven_sp = 0
 # ── summary cards ─────────────────────────────────────────────────────────────
 st.subheader("Actual Race Summary")
 
@@ -97,20 +98,20 @@ with st.expander("View Full Financial Breakdown"):
         ]
         income_df = pd.DataFrame(income_items, columns=["Category", "Amount ($)"])
         income_df["Amount ($)"] = income_df["Amount ($)"].apply(lambda x: f"${x:,.2f}")
-        st.dataframe(income_df, use_container_width=True, hide_index=True)
+        st.dataframe(income_df, width='stretch', hide_index=True)
 
     with right:
         st.markdown("**Fixed Expenses**")
         fixed_items = [(c, fin[c]) for c in FIXED_COLS] + [("Total Fixed expense", fin["Total Fixed expense"])]
         fixed_df = pd.DataFrame(fixed_items, columns=["Category", "Amount ($)"])
         fixed_df["Amount ($)"] = fixed_df["Amount ($)"].apply(lambda x: f"${x:,.2f}")
-        st.dataframe(fixed_df, use_container_width=True, hide_index=True)
+        st.dataframe(fixed_df, width='stretch', hide_index=True)
 
     st.markdown("**Variable Expenses**")
     var_items = [(c, fin[c]) for c in VARIABLE_COLS] + [("Total Variable expense", fin["Total Variable expense"])]
     var_df = pd.DataFrame(var_items, columns=["Category", "Amount ($)"])
     var_df["Amount ($)"] = var_df["Amount ($)"].apply(lambda x: f"${x:,.2f}")
-    st.dataframe(var_df, use_container_width=True, hide_index=True)
+    st.dataframe(var_df, width='stretch', hide_index=True)
 
 # ── year-over-year comparison table ──────────────────────────────────────────
 if len(available) > 1:
@@ -148,7 +149,7 @@ if len(available) > 1:
         yoy_rows.append(row)
 
     yoy_df = pd.DataFrame(yoy_rows)
-    st.dataframe(yoy_df.set_index("Year").T, use_container_width=True)
+    st.dataframe(yoy_df.set_index("Year").T, width='stretch')
 
     # YoY bar chart
     years_sorted = sorted(available)
@@ -165,7 +166,7 @@ if len(available) > 1:
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
     fig_yoy.update_yaxes(tickprefix="$", gridcolor="rgba(200,200,200,0.2)")
-    st.plotly_chart(fig_yoy, use_container_width=True)
+    st.plotly_chart(fig_yoy, width='stretch')
 
 # ── projection tool ───────────────────────────────────────────────────────────
 st.divider()
@@ -233,7 +234,7 @@ fig_comp.update_layout(
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
 )
 fig_comp.update_yaxes(tickprefix="$", gridcolor="rgba(200,200,200,0.2)")
-st.plotly_chart(fig_comp, use_container_width=True)
+st.plotly_chart(fig_comp, width='stretch')
 
 # ── breakeven curve ───────────────────────────────────────────────────────────
 st.subheader("Breakeven Curve")
@@ -285,7 +286,7 @@ fig_be.update_layout(
 )
 fig_be.update_yaxes(tickprefix="$", gridcolor="rgba(200,200,200,0.2)")
 fig_be.update_xaxes(gridcolor="rgba(200,200,200,0.2)")
-st.plotly_chart(fig_be, use_container_width=True)
+st.plotly_chart(fig_be, width='stretch')
 
 conn.close()
 
