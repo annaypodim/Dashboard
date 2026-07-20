@@ -81,7 +81,7 @@ col5, col6, col7, col8 = st.columns(4)
 col5.metric("Race Income / Registrant",   f"${race_income_per_reg:,.2f}")
 col6.metric("Variable Cost / Reg",        f"${var_per_reg:,.2f}")
 col7.metric("Contribution Margin / Reg",  f"${contribution_margin:,.2f}")
-col8.metric("Breakeven Registrants",      f"{breakeven_sp:,.0f}")
+col8.metric("Breakeven Registrants",      f"{breakeven_nosp:,.0f}")
 
 # ── full breakdown ────────────────────────────────────────────────────────────
 with st.expander("View Full Financial Breakdown"):
