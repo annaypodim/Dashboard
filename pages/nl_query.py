@@ -264,17 +264,32 @@ def render_response(result, turn_id, question=""):
         string_cols = df.select_dtypes(include=["object"]).columns.tolist()
         numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
         if string_cols and numeric_cols:
-            fig = px.bar(df, x=string_cols[0], y=numeric_cols, barmode="group")
-            _small_chart(fig, key=f"grouped_{turn_id}")
-            # A share view alongside the counts, so categories of very different
-            # sizes stay comparable.
-            share = df.copy()
-            totals = share[numeric_cols].sum(axis=1)
-            for c in numeric_cols:
-                share[c] = (share[c] / totals * 100).round(1)
-            fig_share = px.bar(share, x=string_cols[0], y=numeric_cols, barmode="stack")
-            fig_share.update_yaxes(title="% share")
-            _small_chart(fig_share, key=f"groupedshare_{turn_id}")
+            # Metrics on wildly different scales (a $22,000 expense next to a
+            # $25 margin and an 884 count) cannot share one axis — the small
+            # series flatten to nothing. Detect that and chart them separately.
+            peaks = {c: abs(df[c]).max() for c in numeric_cols}
+            biggest, smallest = max(peaks.values()), min(v for v in peaks.values() if v)
+            mixed_scale = bool(smallest) and biggest / smallest > 50
+
+            if mixed_scale:
+                for c in numeric_cols:
+                    fig = px.bar(df, x=string_cols[0], y=c)
+                    fig.update_yaxes(title=c)
+                    _small_chart(fig, key=f"grouped_{turn_id}_{c}")
+            else:
+                fig = px.bar(df, x=string_cols[0], y=numeric_cols, barmode="group")
+                _small_chart(fig, key=f"grouped_{turn_id}")
+                # A share view alongside the counts, so categories of very
+                # different sizes stay comparable. Only meaningful when the
+                # columns are commensurable — a "% share" across mixed units
+                # (dollars + headcounts) would be a meaningless ratio.
+                share = df.copy()
+                totals = share[numeric_cols].sum(axis=1)
+                for c in numeric_cols:
+                    share[c] = (share[c] / totals * 100).round(1)
+                fig_share = px.bar(share, x=string_cols[0], y=numeric_cols, barmode="stack")
+                fig_share.update_yaxes(title="% share")
+                _small_chart(fig_share, key=f"groupedshare_{turn_id}")
 
     elif chart_hint == "line":
         st.dataframe(df, use_container_width=True)

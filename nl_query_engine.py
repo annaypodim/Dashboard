@@ -204,6 +204,32 @@ FINANCE TABLE — read this before joining it:
                     / NULLIF((SELECT COUNT(*) FROM participants WHERE race_name = 'race_2025'), 0), 0))
         AS "Registrants needed to match last year";
    Always guard every divisor with NULLIF(..., 0) so the query cannot fail on a divide-by-zero. Give each derived column a clear quoted alias. This one-row shape is correct here — do NOT add a race_name column, because the row spans two years rather than describing one.
+28. BREAK-EVEN questions ("how many registrants do we need to break even", "break-even point", "how many to cover our costs"). Break-even is FIXED cost divided by the CONTRIBUTION MARGIN per registrant. It is never total expense divided by expense-per-registrant — that is circular and just returns the registrant count. The margin must come from INCOME, not cost.
+   The finance table stores only raw line items; the fixed/variable totals are sums of those columns:
+     Total Fixed expense    = "BTB (Cost / Consulting)" + "BTB (Rentals)" + "EMS" + "Timing services" + "Portable" + "Facebook/Signs" + "RRCA (insurance)" + "Other" + "Photography"
+     Total Variable expense = "Shirts" + "Medals" + "Bandana" + "EMEDIA (Bibs)"
+     Race income (excl. sponsorship) = "Total income" - "Sponsorship"
+     contribution margin per registrant = (("Total income" - "Sponsorship") - Total Variable expense) / registrants
+     break-even registrants = CEIL(Total Fixed expense / contribution margin per registrant)
+   This matches the Finance Tool page, so the two must agree. Break-even is a PER-YEAR figure: when several years are asked for, follow rules 10 and 11 (one row per year, race_name first) rather than the rule 27 one-row shape. Canonical pattern:
+    SELECT f.race_name,
+           p.registrants,
+           ROUND(((f."BTB (Cost / Consulting)" + f."BTB (Rentals)" + f."EMS" + f."Timing services"
+                   + f."Portable" + f."Facebook/Signs" + f."RRCA (insurance)" + f."Other"
+                   + f."Photography"))::numeric, 2) AS "Total fixed expense",
+           ROUND(((((f."Total income" - f."Sponsorship")
+                    - (f."Shirts" + f."Medals" + f."Bandana" + f."EMEDIA (Bibs)"))
+                   / NULLIF(p.registrants, 0)))::numeric, 2) AS "Contribution margin per registrant",
+           CEIL((f."BTB (Cost / Consulting)" + f."BTB (Rentals)" + f."EMS" + f."Timing services"
+                 + f."Portable" + f."Facebook/Signs" + f."RRCA (insurance)" + f."Other" + f."Photography")
+                / NULLIF((((f."Total income" - f."Sponsorship")
+                           - (f."Shirts" + f."Medals" + f."Bandana" + f."EMEDIA (Bibs)"))
+                          / NULLIF(p.registrants, 0)), 0)) AS "Break-even registrants"
+    FROM finance f
+    JOIN (SELECT race_name, COUNT(*) AS registrants FROM participants GROUP BY race_name) p
+      ON p.race_name = f.race_name
+    WHERE f.race_name IN ('race_2024', 'race_2025')
+    ORDER BY f.race_name;
 
 RESPONSE FORMAT:
 Return ONLY the SQL query. No explanation, no markdown, no code fences. Just the raw SQL.
