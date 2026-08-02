@@ -211,20 +211,30 @@ FINANCE TABLE — read this before joining it:
      Race income (excl. sponsorship) = "Total income" - "Sponsorship"
      contribution margin per registrant = (("Total income" - "Sponsorship") - Total Variable expense) / registrants
      break-even registrants = CEIL(Total Fixed expense / contribution margin per registrant)
+   Variable cost is NOT missing from this formula — it is subtracted inside the margin, so the break-even count does cover total (fixed + variable) cost at that volume. Label the fixed term "Fixed costs to cover" and the margin "Margin per registrant (after variable costs)" so the result does not read as though variable cost were ignored.
+   Report BOTH break-even variants, because they answer different questions and differ a lot:
+     - "Break-even registrants (sponsorship excluded)" = CEIL(Total Fixed expense / margin) — the conservative figure, treating sponsorship and donations as though they may not arrive. This is the Finance Tool's headline number.
+     - "Break-even registrants (sponsorship included)" = CEIL(GREATEST(Total Fixed expense - "Sponsorship" - "Donations", 0) / margin) — sponsorship and donations count against fixed costs first.
    This matches the Finance Tool page, so the two must agree. Break-even is a PER-YEAR figure: when several years are asked for, follow rules 10 and 11 (one row per year, race_name first) rather than the rule 27 one-row shape. Canonical pattern:
     SELECT f.race_name,
            p.registrants,
            ROUND(((f."BTB (Cost / Consulting)" + f."BTB (Rentals)" + f."EMS" + f."Timing services"
                    + f."Portable" + f."Facebook/Signs" + f."RRCA (insurance)" + f."Other"
-                   + f."Photography"))::numeric, 2) AS "Total fixed expense",
+                   + f."Photography"))::numeric, 2) AS "Fixed costs to cover",
            ROUND(((((f."Total income" - f."Sponsorship")
                     - (f."Shirts" + f."Medals" + f."Bandana" + f."EMEDIA (Bibs)"))
-                   / NULLIF(p.registrants, 0)))::numeric, 2) AS "Contribution margin per registrant",
+                   / NULLIF(p.registrants, 0)))::numeric, 2) AS "Margin per registrant (after variable costs)",
            CEIL((f."BTB (Cost / Consulting)" + f."BTB (Rentals)" + f."EMS" + f."Timing services"
                  + f."Portable" + f."Facebook/Signs" + f."RRCA (insurance)" + f."Other" + f."Photography")
                 / NULLIF((((f."Total income" - f."Sponsorship")
                            - (f."Shirts" + f."Medals" + f."Bandana" + f."EMEDIA (Bibs)"))
-                          / NULLIF(p.registrants, 0)), 0)) AS "Break-even registrants"
+                          / NULLIF(p.registrants, 0)), 0)) AS "Break-even registrants (sponsorship excluded)",
+           CEIL(GREATEST(f."BTB (Cost / Consulting)" + f."BTB (Rentals)" + f."EMS" + f."Timing services"
+                 + f."Portable" + f."Facebook/Signs" + f."RRCA (insurance)" + f."Other" + f."Photography"
+                 - f."Sponsorship" - f."Donations", 0)
+                / NULLIF((((f."Total income" - f."Sponsorship")
+                           - (f."Shirts" + f."Medals" + f."Bandana" + f."EMEDIA (Bibs)"))
+                          / NULLIF(p.registrants, 0)), 0)) AS "Break-even registrants (sponsorship included)"
     FROM finance f
     JOIN (SELECT race_name, COUNT(*) AS registrants FROM participants GROUP BY race_name) p
       ON p.race_name = f.race_name
