@@ -206,6 +206,47 @@ def render_response(result, turn_id, question=""):
         col_name = df.columns[0]
         st.metric(label=col_name, value=f"{value:,}" if isinstance(value, (int, float)) else str(value))
 
+    elif chart_hint == "pivot_bar":
+        st.dataframe(df, use_container_width=True)
+        string_cols = df.select_dtypes(include=["object"]).columns.tolist()
+        numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
+        # Per rule 11 the year label is the first string column; the second is the
+        # breakdown dimension. Categories go on x so they compare across years.
+        year_col, cat_col, val_col = string_cols[0], string_cols[1], numeric_cols[0]
+        wide = df.pivot_table(index=cat_col, columns=year_col, values=val_col,
+                              aggfunc="sum", fill_value=0).reset_index()
+        years = [c for c in wide.columns if c != cat_col]
+        fig = px.bar(wide, x=cat_col, y=years, barmode="group")
+        fig.update_yaxes(title=val_col)
+        _small_chart(fig, key=f"pivot_{turn_id}")
+        # Share view: category mix within each year, so a year with more total
+        # registrants doesn't just look uniformly taller.
+        pct = df.pivot_table(index=year_col, columns=cat_col, values=val_col,
+                             aggfunc="sum", fill_value=0)
+        pct = (pct.div(pct.sum(axis=1), axis=0) * 100).round(1).reset_index()
+        cats = [c for c in pct.columns if c != year_col]
+        fig_pct = px.bar(pct, x=year_col, y=cats, barmode="stack")
+        fig_pct.update_yaxes(title="% share")
+        _small_chart(fig_pct, key=f"pivotshare_{turn_id}")
+
+    elif chart_hint == "metrics":
+        # One row, several figures: show them as KPI tiles rather than a
+        # single-point chart. Tiles wrap onto a second line past four columns.
+        row = df.iloc[0]
+        cols = list(df.columns)
+        for start in range(0, len(cols), 4):
+            chunk = cols[start:start + 4]
+            for slot, name in zip(st.columns(len(chunk)), chunk):
+                value = row[name]
+                slot.metric(
+                    label=str(name),
+                    value=f"{value:,.2f}".rstrip("0").rstrip(".")
+                    if isinstance(value, float) else f"{value:,}"
+                    if isinstance(value, int) else str(value),
+                )
+        with st.expander("data", expanded=False):
+            st.dataframe(df, use_container_width=True)
+
     elif chart_hint == "bar":
         st.dataframe(df, use_container_width=True)
         string_cols = df.select_dtypes(include=["object"]).columns.tolist()

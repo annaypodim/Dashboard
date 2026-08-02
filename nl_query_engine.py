@@ -147,6 +147,7 @@ SCHEMA CONVENTIONS:
 
 SINGLE-YEAR vs CROSS-YEAR — IMPORTANT:
 9. If the question names ONE specific year (e.g. "race_2024", "in 2023", "for race_2022", "in race_2025"), filter with WHERE race_name = 'race_YYYY' and do NOT add a race_name / year label column to the output — the output columns must be EXACTLY the requested metric(s). For example, "How many male vs female in race_2023?" → `SELECT "Sex", COUNT(*) FROM participants WHERE race_name = 'race_2023' AND "Sex" IN ('M','F') GROUP BY "Sex"`. And "Which event had the most registrations in race_2023?" → `SELECT event, COUNT(*) FROM participants WHERE race_name = 'race_2023' GROUP BY event ORDER BY COUNT(*) DESC LIMIT 1`. The year is already known — don't duplicate it.
+9b. EXCEPTION to rule 9: if the question names one year but ALSO asks to benchmark it against other years — "compared to previous years", "vs last year", "how does it compare", "what we might expect based on previous years", "is that normal", "relative to prior years" — it is a CROSS-YEAR question. Include EVERY year (do not filter to the named year alone) and add race_name to the SELECT and GROUP BY per rules 10 and 11, so the comparison is visible in the result rather than only implied. For example, "how are registrants distributed among events so far in 2025 and how does that compare to previous years?" → `SELECT race_name, event, COUNT(*) AS registrants FROM participants GROUP BY race_name, event ORDER BY race_name, registrants DESC` — all years, not just race_2025.
 10. If the question mentions multiple years, "each year", "across all years", "by year", "per year", "compare X and Y" across years, or "how did X change" — produce ONE ROW PER YEAR by adding race_name to GROUP BY (e.g. `SELECT race_name, COUNT(*) AS n FROM participants GROUP BY race_name ORDER BY race_name`). Do NOT use UNION ALL — grouping on race_name is the single-table equivalent. Never use SELECT * — list specific columns explicitly.
 11. In cross-year output, the FIRST column MUST be race_name (the 'race_YYYY' label). The metric columns come AFTER. Never put the metric before the race_name column.
 12. "from YEAR_A to YEAR_B" phrased as a change or comparison ("change from A to B", "compare between A and B", "how did X change from A to B") means ONLY the two endpoint years (exactly 2 rows). Restrict with WHERE race_name IN ('race_A', 'race_B') and GROUP BY race_name. Do NOT include years in between. For example, "between 2022 and 2024" in a comparison context means race_2022 and race_2024 only — never include race_2023.
@@ -189,6 +190,20 @@ FINANCE TABLE — read this before joining it:
       ON p.race_name = f.race_name
     ORDER BY f.race_name;
    The finance columns are already per-race totals — select them directly (f."Total expense"), never wrap them in SUM/AVG across the join.
+27. CROSS-YEAR questions that combine figures from TWO DIFFERENT years (e.g. "what would we need this year to match last year's revenue", "how does this year's revenue per registrant compare to last year's total", any projection/break-even/target framed as "the same as last year"): NEVER express this as a join on race_name with a different year filter on each side. `JOIN ... ON p.race_name = f.race_name` where p is filtered to 'race_2024' and f to 'race_2025' matches ZERO rows and returns an empty result. The two years are different rows, so they can never be equal-joined.
+   Instead compute each year's figure as its own INDEPENDENT scalar subquery and select them side by side in a single row, deriving the answer arithmetically. Canonical pattern for "how many registrants do we need this year to match last year's revenue":
+    SELECT
+      (SELECT f."Total income" FROM finance f WHERE f.race_name = 'race_2024') AS "Last year revenue",
+      (SELECT f."Total income" FROM finance f WHERE f.race_name = 'race_2025') AS "This year revenue so far",
+      (SELECT COUNT(*) FROM participants WHERE race_name = 'race_2025') AS "Registrants so far",
+      ROUND(((SELECT f."Total income" FROM finance f WHERE f.race_name = 'race_2025')
+             / NULLIF((SELECT COUNT(*) FROM participants WHERE race_name = 'race_2025'), 0))::numeric, 2)
+        AS "Revenue per registrant",
+      CEIL((SELECT f."Total income" FROM finance f WHERE f.race_name = 'race_2024')
+           / NULLIF((SELECT f."Total income" FROM finance f WHERE f.race_name = 'race_2025')
+                    / NULLIF((SELECT COUNT(*) FROM participants WHERE race_name = 'race_2025'), 0), 0))
+        AS "Registrants needed to match last year";
+   Always guard every divisor with NULLIF(..., 0) so the query cannot fail on a divide-by-zero. Give each derived column a clear quoted alias. This one-row shape is correct here — do NOT add a race_name column, because the row spans two years rather than describing one.
 
 RESPONSE FORMAT:
 Return ONLY the SQL query. No explanation, no markdown, no code fences. Just the raw SQL.
@@ -446,14 +461,33 @@ def infer_chart_type(df: pd.DataFrame) -> str:
     if nrows == 1 and ncols == 1:
         return "metric"
 
-    # Check for date-like columns
-    date_cols = [c for c in df.columns if any(d in c.lower() for d in ["date", "day", "month", "year", "time"])]
-
     numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
     string_cols = df.select_dtypes(include=["object"]).columns.tolist()
 
+    # A single row of several figures (e.g. a projection: last year's revenue,
+    # this year's rate, the registrants needed) is a set of KPIs, not a series.
+    # Charting it as a line yields one meaningless point.
+    if nrows == 1 and len(numeric_cols) >= 2:
+        return "metrics"
+
+    # Check for date-like columns. Match on whole words so a metric named
+    # "Last year revenue" is not mistaken for a time axis because of "year", and
+    # require a non-numeric dtype — a real date axis is dates or labels, never a
+    # float measure.
+    date_cols = [
+        c for c in df.columns
+        if re.search(r"\b(date|day|month|year|time)\b", str(c), re.IGNORECASE)
+        and c not in numeric_cols
+    ]
+
     if date_cols and numeric_cols:
         return "line"
+
+    # year + category + one measure (e.g. race_name, event, registrants). Charting
+    # this on string_cols[0] alone silently sums the categories away and draws one
+    # bar per year; pivot it so each category is comparable across years instead.
+    if len(string_cols) == 2 and len(numeric_cols) == 1 and nrows > 1:
+        return "pivot_bar"
 
     if len(string_cols) == 1 and len(numeric_cols) == 1:
         if nrows <= 10:
