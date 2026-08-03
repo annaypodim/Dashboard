@@ -475,7 +475,50 @@ def ask(question: str, api_key: str, model: str = "gpt-4o-mini", provider: str =
         "data": df,
         "error": None,
         "chart_hint": chart_hint,
+        "empty_reason": diagnose_empty(sql) if df.empty else None,
     }
+
+
+def diagnose_empty(sql: str) -> str | None:
+    """Explain WHY a well-formed query came back with no rows.
+
+    The common case is a race year that exists in one table but not the other:
+    the current season has registrations from day one, but its finance row is
+    only filled in later. Without this the page says "no results", which reads
+    like the query failed rather than like the data not being there yet.
+    """
+    years = sorted(set(re.findall(r"race_\d{4}", sql)))
+    if not years:
+        return None
+
+    try:
+        conn = connect_db()
+        try:
+            have_fin = set(pd.read_sql("SELECT race_name FROM finance", conn)["race_name"])
+            have_par = set(pd.read_sql(
+                "SELECT DISTINCT race_name FROM participants", conn)["race_name"])
+        finally:
+            conn.close()
+    except Exception:
+        return None
+
+    touches_finance = "finance" in sql.lower()
+    missing_fin = [y for y in years if touches_finance and y not in have_fin]
+    missing_par = [y for y in years if y not in have_par]
+
+    if missing_par:
+        return (f"No registrations are recorded for {', '.join(missing_par)}, "
+                "so this question has nothing to compute from.")
+    if missing_fin:
+        names = ", ".join(missing_fin)
+        known = ", ".join(sorted(have_fin)) or "none"
+        return (
+            f"There is no financial data for {names} yet — the finance table only "
+            f"covers {known}. Registrations for {names} are being recorded, but until "
+            "someone enters that season's income and cost line items (via the uploader "
+            "page) any revenue, cost or break-even figure for it cannot be calculated."
+        )
+    return None
 
 
 def infer_chart_type(df: pd.DataFrame) -> str:

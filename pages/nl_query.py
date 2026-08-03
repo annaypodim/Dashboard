@@ -175,7 +175,14 @@ def render_response(result, turn_id, question=""):
 
     df = result["data"]
     if df is None or df.empty:
-        st.warning("The query returned no results. Try rephrasing your question.")
+        # A well-formed query over a year whose data hasn't been entered yet is
+        # not a failed query — say which data is missing instead of implying the
+        # question was phrased wrong.
+        reason = result.get("empty_reason")
+        if reason:
+            st.info(reason)
+        else:
+            st.warning("The query returned no results. Try rephrasing your question.")
         return
 
     evidence = result["evidence"]
